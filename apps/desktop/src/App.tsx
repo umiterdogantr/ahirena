@@ -6,9 +6,10 @@ import ChatView from "./components/ChatView";
 import ModelsView from "./components/ModelsView";
 import CompareView from "./components/CompareView";
 import SettingsView from "./components/SettingsView";
+import SkillsView from "./components/SkillsView";
 import StatusBar from "./components/StatusBar";
 
-export type View = "chat" | "models" | "compare" | "settings";
+export type View = "chat" | "models" | "compare" | "skills" | "settings";
 
 export default function App() {
   const [core, setCore] = useState<CoreStatus>({ state: "starting", error: null, log_hint: null });
@@ -147,6 +148,7 @@ export default function App() {
         )}
         {view === "models" && <ModelsView models={models} loaded={loaded} errors={modelErrors} onRefresh={refreshModels} />}
         {view === "compare" && settings && <CompareView models={models} settings={settings} onRunning={setRunning} />}
+        {view === "skills" && <SkillsView />}
         {view === "settings" && settings && <SettingsView settings={settings} models={models} health={health} onSaved={setSettings} />}
       </main>
       <StatusBar health={health} error={healthError} loaded={loaded} running={running} />

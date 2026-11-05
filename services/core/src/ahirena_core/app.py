@@ -14,6 +14,7 @@ from . import __version__
 from .config import Settings
 from .db import Database
 from .ollama_runtime import OllamaRuntime
+from .phase2 import register_phase2
 from .providers import ChatMessage, ChatOptions, ModelProvider, ProviderError, ProviderRegistry
 from .providers.ollama import OllamaProvider
 from .runs import RunManager, RunResult
@@ -332,4 +333,5 @@ def create_app(
     async def cancel_run(run_id: str) -> dict[str, bool]:
         return {"cancelled": app.state.runs.cancel(run_id)}
 
+    register_phase2(app, settings)
     return app

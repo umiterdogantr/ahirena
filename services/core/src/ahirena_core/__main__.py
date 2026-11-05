@@ -29,6 +29,8 @@ def _setup_logging(settings: Settings) -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _process_alive(pid: int) -> bool:

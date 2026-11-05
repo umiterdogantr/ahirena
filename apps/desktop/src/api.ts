@@ -21,7 +21,7 @@ function detail(body: unknown, status: number): string {
   return `İstek başarısız (HTTP ${status})`;
 }
 
-export async function api<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
+export async function api<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await invoke<RawResponse>("api", { method, path, body: body ?? null });
   if (res.status >= 400) throw new ApiError(res.status, detail(res.body, res.status));
   return res.body as T;

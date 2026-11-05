@@ -1,0 +1,230 @@
+"""Yetenek paketleri.
+
+Paket `SKILL.md` (ad ve açıklama) ile uygulamaya özgü `capabilities.json` taşır.
+`capabilities.json` Agent Skills veya MCP standardının parçası değildir.
+Paket metni izin veremez: istenen araç ile kullanıcının verdiği izin ayrıdır.
+Betik çalıştırılmaz; yalnızca denetlenmiş araçlar vardır.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import shutil
+import uuid
+from pathlib import Path
+
+from .db import Database, utcnow
+from .filesafe import FileRejected, read_inside, validate_root
+from .sqlguard import PROBE_SQL, TABLES_SQL, SqlRejected, assert_readonly
+
+AUDITED_TOOLS = ("clock.now", "files.read", "sql.query", "sql.tables")
+_NAME = re.compile(r"^[a-z0-9-]{1,40}$")
+
+
+class SkillError(ValueError):
+    pass
+
+
+def parse_skill_md(text: str) -> tuple[str, str, str]:
+    if not text.startswith("---"):
+        raise SkillError("SKILL.md '---' ön bilgisiyle başlamalı.")
+    end = text.find("\n---", 3)
+    if end < 0:
+        raise SkillError("SKILL.md ön bilgisi kapanmamış.")
+    meta: dict[str, str] = {}
+    for line in text[3:end].splitlines():
+        if not line.strip():
+            continue
+        if ":" not in line:
+            raise SkillError(f"Ön bilgi satırı anlaşılamadı: {line}")
+        key, value = line.split(":", 1)
+        meta[key.strip()] = value.strip().strip('"').strip("'")
+    name = meta.get("name", "")
+    description = meta.get("description", "")
+    if not _NAME.match(name):
+        raise SkillError("name yalnızca küçük harf, rakam ve tire olabilir (en fazla 40).")
+    if not description or len(description) > 400:
+        raise SkillError("description 1–400 karakter olmalı.")
+    return name, description, text[end + 4 :].strip()
+
+
+def parse_capabilities(text: str) -> list[str]:
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise SkillError(f"capabilities.json okunamadı: {e}") from e
+    if data.get("format") != "ahirena-capabilities" or data.get("version") != 1:
+        raise SkillError("capabilities.json formatı ahirena-capabilities sürüm 1 olmalı.")
+    if data.get("network") not in (None, "none"):
+        raise SkillError("Bu aşamada ağ izni verilemez.")
+    tools = data.get("tools")
+    if not isinstance(tools, list) or not tools or len(tools) > 8:
+        raise SkillError("En az bir, en fazla sekiz araç yazılmalı.")
+    unknown = [t for t in tools if t not in AUDITED_TOOLS]
+    if unknown:
+        raise SkillError(
+            "Denetlenmemiş araç istenmiş: "
+            + ", ".join(map(str, unknown))
+            + ". Betik ve kabuk çalıştırma kapalı."
+        )
+    return list(dict.fromkeys(tools))
+
+
+def package_hash(skill_md: str, capabilities: str) -> str:
+    h = hashlib.sha256()
+    h.update(skill_md.encode("utf-8"))
+    h.update(b"\0")
+    h.update(capabilities.encode("utf-8"))
+    return h.hexdigest()
+
+
+class SkillRegistry:
+    def __init__(self, db: Database, data_dir: Path):
+        self.db = db
+        self.root = data_dir / "skills"
+
+    def list(self) -> list[dict]:
+        rows = self.db.query("SELECT * FROM skills ORDER BY name")
+        return [self._row(r) for r in rows]
+
+    def get(self, skill_id: str) -> dict:
+        row = self.db.query_one("SELECT * FROM skills WHERE id = ?", (skill_id,))
+        if not row:
+            raise SkillError("Yetenek bulunamadı.")
+        return self._row(row)
+
+    def import_dir(self, source: str) -> dict:
+        src = Path(source).expanduser().resolve()
+        skill_path = src / "SKILL.md"
+        cap_path = src / "capabilities.json"
+        if not skill_path.is_file() or not cap_path.is_file():
+            raise SkillError("Klasörde SKILL.md ve capabilities.json olmalı.")
+        skill_md = skill_path.read_text(encoding="utf-8-sig")
+        cap_text = cap_path.read_text(encoding="utf-8-sig")
+        name, description, _body = parse_skill_md(skill_md)
+        tools = parse_capabilities(cap_text)
+        digest = package_hash(skill_md, cap_text)
+        existing = self.db.query_one("SELECT id, content_hash FROM skills WHERE id = ?", (name,))
+        if existing and existing["content_hash"] == digest:
+            return self.get(name)
+        dest = self.root / name / digest[:12]
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True)
+        (dest / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        (dest / "capabilities.json").write_text(cap_text, encoding="utf-8")
+        now = utcnow()
+        with self.db.transaction() as c:
+            if existing:
+                c.execute(
+                    """UPDATE skills SET version='1', description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?, created_at=?
+                       WHERE id=?""",
+                    (description, str(dest), digest, json.dumps(tools), now, name),
+                )
+                c.execute("DELETE FROM skill_grants WHERE skill_id = ?", (name,))
+            else:
+                c.execute(
+                    """INSERT INTO skills (id, version, name, description, enabled, package_dir, content_hash, tools_json, created_at)
+                       VALUES (?, '1', ?, ?, 0, ?, ?, ?, ?)""",
+                    (name, name, description, str(dest), digest, json.dumps(tools), now),
+                )
+        return self.get(name)
+
+    def set_enabled(self, skill_id: str, enabled: bool, grants: list[dict] | None = None) -> dict:
+        skill = self.get(skill_id)
+        if not enabled:
+            self.db.query("UPDATE skills SET enabled = 0 WHERE id = ?", (skill_id,))
+            return self.get(skill_id)
+        declared = set(skill["tools"])
+        cleaned: list[tuple[str, str]] = []
+        for grant in grants or []:
+            perm = grant.get("permission")
+            if perm not in declared:
+                raise SkillError(f"Paket bu aracı istemiyor: {perm}")
+            scope = grant.get("scope") or {}
+            if perm == "files.read":
+                roots = [str(validate_root(p)) for p in (scope.get("roots") or [])]
+                if not roots:
+                    raise SkillError("files.read için en az bir klasör seçilmeli.")
+                scope = {"roots": roots}
+            elif perm in ("sql.query", "sql.tables"):
+                if scope.get("mode") not in (None, "read"):
+                    raise SkillError("SQL izni yalnızca salt okunur olabilir.")
+                scope = {"mode": "read"}
+            elif perm == "clock.now":
+                scope = {}
+            else:
+                raise SkillError(f"Bilinmeyen izin: {perm}")
+            cleaned.append((perm, json.dumps(scope)))
+        missing = declared - {p for p, _ in cleaned}
+        if missing:
+            raise SkillError("Etkinleştirmeden önce istenen her araca izin verilmeli: " + ", ".join(sorted(missing)))
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM skill_grants WHERE skill_id = ?", (skill_id,))
+            c.executemany(
+                "INSERT INTO skill_grants (skill_id, permission, scope_json) VALUES (?, ?, ?)",
+                [(skill_id, p, s) for p, s in cleaned],
+            )
+            c.execute("UPDATE skills SET enabled = 1 WHERE id = ?", (skill_id,))
+        return self.get(skill_id)
+
+    def call(self, skill_id: str, tool: str, arguments: dict, sql_query) -> dict:
+        skill = self.get(skill_id)
+        if not skill["enabled"]:
+            return self._finish(skill_id, None, tool, False, "Yetenek kapalı; yeni çağrı başlamaz.")
+        if tool not in skill["tools"]:
+            return self._finish(skill_id, None, tool, False, "Bu araç paketin bildirmediği bir araç.")
+        grant = self.db.query_one(
+            "SELECT scope_json FROM skill_grants WHERE skill_id = ? AND permission = ?", (skill_id, tool)
+        )
+        if not grant:
+            return self._finish(skill_id, None, tool, False, "Kullanıcı bu araca izin vermemiş.")
+        scope = json.loads(grant["scope_json"])
+        try:
+            result = self._run(tool, arguments or {}, scope, sql_query)
+        except (SkillError, FileRejected, SqlRejected) as e:
+            return self._finish(skill_id, None, tool, False, str(e))
+        done = self._finish(skill_id, None, tool, True, None)
+        done["result"] = result
+        return done
+
+    def _run(self, tool: str, arguments: dict, scope: dict, sql_query) -> dict:
+        if tool == "clock.now":
+            return {"utc": utcnow()}
+        if tool == "files.read":
+            return read_inside(scope.get("roots") or [], str(arguments.get("path") or ""))
+        if tool == "sql.tables":
+            return sql_query(TABLES_SQL)
+        if tool == "sql.query":
+            return sql_query(assert_readonly(str(arguments.get("sql") or "")))
+        raise SkillError("Araç yok.")
+
+    def _finish(self, skill_id: str | None, mcp_id: str | None, tool: str, ok: bool, error: str | None) -> dict:
+        self.db.query(
+            "INSERT INTO tool_calls (id, skill_id, mcp_id, tool, ok, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), skill_id, mcp_id, tool, int(ok), error, utcnow()),
+        )
+        return {"ok": ok, "error": error, "tool": tool}
+
+    def _row(self, row) -> dict:
+        grants = self.db.query("SELECT permission, scope_json FROM skill_grants WHERE skill_id = ?", (row["id"],))
+        return {
+            "id": row["id"],
+            "version": row["version"],
+            "name": row["name"],
+            "description": row["description"],
+            "enabled": bool(row["enabled"]),
+            "content_hash": row["content_hash"],
+            "tools": json.loads(row["tools_json"]),
+            "grants": [{"permission": g["permission"], "scope": json.loads(g["scope_json"])} for g in grants],
+            "scripts": "kapalı",
+        }
+
+
+def log_mcp_call(db: Database, mcp_id: str, tool: str, ok: bool, error: str | None) -> None:
+    db.query(
+        "INSERT INTO tool_calls (id, skill_id, mcp_id, tool, ok, error, created_at) VALUES (?, NULL, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), mcp_id, tool, int(ok), error, utcnow()),
+    )

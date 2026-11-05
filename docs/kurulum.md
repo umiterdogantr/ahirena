@@ -53,11 +53,10 @@ Modeller yönetilen örnek üzerinden indirilir (sunucu gerekirse geçici başla
 scripts\ollama.cmd pull gemma4:e2b-it-qat
 scripts\ollama.cmd pull qwen3.5:4b-q4_K_M
 scripts\ollama.cmd pull qwen3.5:9b-q4_K_M
-scripts\ollama.cmd pull qwen3.5:2b-q4_K_M
 scripts\ollama.cmd list
 ```
 
-Etiketler nicemleme düzeyiyle sabitlenmiştir; `latest` kullanılmaz.
+Etiketler nicemleme düzeyiyle sabitlenmiştir; `latest` kullanılmaz. `qwen3.5:2b` bu cihazda başkent ve çeviri denetimlerini geçemediği için tutulmaz.
 
 ## Komutlar (depo kökünden)
 
@@ -69,6 +68,14 @@ Etiketler nicemleme düzeyiyle sabitlenmiştir; `latest` kullanılmaz.
 | `scripts\ollama.cmd ...` | Ollama komutlarını Ahirena'nın örneğine karşı çalıştırır |
 | `scripts\dev.cmd` | Geliştirme modu |
 | `scripts\build.cmd` | Paketli sürüm: `Ahirena_*_x64-setup.exe` (yol komutun sonunda yazılır) |
+
+## Yetenekler (Aşama 2)
+
+Yetenek, `SKILL.md` ve uygulamaya özgü `capabilities.json` içeren bir klasördür. İçe aktarma çekirdek kodunu değiştirmez. Paket hangi aracı istediğini yazar; izin ayrı verilir. Betik çalıştırılmaz.
+
+Denetlenmiş araçlar: `clock.now`, `files.read` (seçilen klasörün içi), `sql.query` ve `sql.tables` (yalnızca SELECT, Windows kimliği, parola yok). MCP sunucusu ayrı süreçte açılır, uygulamanın sırlarını almaz; araç listesi değişince eski izin düşer.
+
+Örnek paket: `examples\skills\saat`. SQL sunucusu `%LOCALAPPDATA%\com.ahirena.desktop\config.json` içindeki `sql` alanındadır.
 
 ## Veri ve geri dönüş
 

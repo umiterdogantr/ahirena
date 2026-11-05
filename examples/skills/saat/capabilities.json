@@ -1,0 +1,6 @@
+{
+  "format": "ahirena-capabilities",
+  "version": 1,
+  "tools": ["clock.now"],
+  "network": "none"
+}

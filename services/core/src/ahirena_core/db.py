@@ -49,6 +49,50 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        2,
+        """
+        CREATE TABLE skills (
+            id            TEXT PRIMARY KEY,
+            version       TEXT NOT NULL,
+            name          TEXT NOT NULL,
+            description   TEXT NOT NULL,
+            enabled       INTEGER NOT NULL DEFAULT 0,
+            package_dir   TEXT NOT NULL,
+            content_hash  TEXT NOT NULL,
+            tools_json    TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+        CREATE TABLE skill_grants (
+            skill_id    TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+            permission  TEXT NOT NULL,
+            scope_json  TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (skill_id, permission)
+        );
+        CREATE TABLE mcp_servers (
+            id                 TEXT PRIMARY KEY,
+            name               TEXT NOT NULL,
+            command            TEXT NOT NULL,
+            args_json          TEXT NOT NULL,
+            enabled            INTEGER NOT NULL DEFAULT 0,
+            protocol_version   TEXT,
+            tools_hash         TEXT,
+            tools_json         TEXT NOT NULL DEFAULT '[]',
+            grants_json        TEXT NOT NULL DEFAULT '[]',
+            last_error         TEXT,
+            updated_at         TEXT NOT NULL
+        );
+        CREATE TABLE tool_calls (
+            id          TEXT PRIMARY KEY,
+            skill_id    TEXT,
+            mcp_id      TEXT,
+            tool        TEXT NOT NULL,
+            ok          INTEGER NOT NULL,
+            error       TEXT,
+            created_at  TEXT NOT NULL
+        );
+        """,
+    ),
 ]
 
 

@@ -12,7 +12,7 @@ struct RawResponse {
     body: Value,
 }
 
-const METHODS: [&str; 4] = ["GET", "POST", "PATCH", "DELETE"];
+const METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 fn check_path(path: &str) -> Result<(), String> {
     if !path.starts_with("/api/") || path.contains("..") || path.contains("://") || path.contains('\\') {

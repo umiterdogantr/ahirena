@@ -18,6 +18,7 @@ const NAV: { id: View; label: string }[] = [
   { id: "chat", label: "Sohbet" },
   { id: "models", label: "Modeller" },
   { id: "compare", label: "Karşılaştır" },
+  { id: "skills", label: "Yetenekler" },
   { id: "settings", label: "Ayarlar" },
 ];
 
