@@ -1,0 +1,33 @@
+{
+  "version": "tr-2026-11-04.1",
+  "description": "Aşama 1 cihaz ölçümü için kısa Türkçe görev seti. 'expect_any' olan sorularda deterministik içerik denetimi yapılır; diğerleri kullanıcı değerlendirmesi içindir.",
+  "prompts": [
+    {
+      "id": "baskent",
+      "text": "Türkiye'nin başkenti neresidir? Tek cümleyle yanıtla.",
+      "expect_any": ["Ankara"]
+    },
+    {
+      "id": "indirim",
+      "text": "Bir ürün 240 TL. %15 indirim uygulanınca yeni fiyatı kaç TL olur? Yalnızca sonucu yaz.",
+      "expect_any": ["204"]
+    },
+    {
+      "id": "ozet",
+      "text": "Aşağıdaki metni iki cümleyle özetle:\n\nŞirketimiz bu yıl depo yönetiminde barkodlu sayım sistemine geçti. Geçişin ilk üç ayında sayım süresi yarı yarıya azaldı, ancak personelin bir kısmı el terminallerine alışmakta zorlandı. Yönetim, gelecek çeyrekte kısa eğitimler düzenlemeye ve en sık yapılan hataları gösteren bir rehber hazırlamaya karar verdi."
+    },
+    {
+      "id": "eposta",
+      "text": "Tedarikçimize, geciken siparişimiz için nazik ama net bir e-posta yaz. Sipariş numarası 4512, beklenen teslim tarihi geçen pazartesiydi. Yeni bir tarih isteyelim."
+    },
+    {
+      "id": "sql",
+      "text": "SQL'de INNER JOIN ile LEFT JOIN arasındaki farkı kısa bir örnekle açıkla."
+    },
+    {
+      "id": "ceviri",
+      "text": "Şu cümleyi Türkçeye çevir: \"The shipment will be delayed by two days due to customs inspection.\"",
+      "expect_any": ["gümrük"]
+    }
+  ]
+}
