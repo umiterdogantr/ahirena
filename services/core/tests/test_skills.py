@@ -53,6 +53,10 @@ def test_clock_runs_and_disable_blocks(live, tmp_path):
     again = client.post("/api/skills/saat/call", json={"tool": "clock.now", "arguments": {}})
     assert again.json()["ok"] is False
     assert "kapalı" in again.json()["error"]
+    removed = client.delete("/api/skills/saat")
+    assert removed.status_code == 200
+    assert removed.json()["removed"] == "saat"
+    assert client.get("/api/skills").json() == []
 
 
 def test_file_root_and_untrusted_content(live, tmp_path):
@@ -125,6 +129,11 @@ def test_mcp_grant_revoked_when_tools_change(live, tmp_path, monkeypatch):
     assert called.json()["ok"] is True, called.text
     assert "merhaba" in called.json()["result"]["raw"]
     assert '"token_miras": false' in called.json()["result"]["raw"]
+    revoked = client.post(f"/api/mcp/{server_id}/revoke", json={"tool": "yankı"})
+    assert revoked.status_code == 200
+    assert "yankı" not in revoked.json()["grants"]
+    assert revoked.json()["enabled"] is False
+    client.post(f"/api/mcp/{server_id}/grant", json={"tool": "yankı"})
 
     db = sqlite3.connect(tmp_path / "data" / "ahirena.db")
     db.execute(
@@ -139,3 +148,5 @@ def test_mcp_grant_revoked_when_tools_change(live, tmp_path, monkeypatch):
     assert again.json()["grants"] == []
     denied = client.post(f"/api/mcp/{server_id}/call", json={"tool": "yankı", "arguments": {"text": "merhaba"}})
     assert denied.json()["ok"] is False
+    assert client.delete(f"/api/mcp/{server_id}").json()["removed"] == server_id
+    assert client.get("/api/mcp").json() == []

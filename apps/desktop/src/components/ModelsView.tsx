@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, errorText } from "../api";
+import { api, errorText, revealPath } from "../api";
 import { bytes, dateTime, ms, shortDigest } from "../format";
 import type { BenchReport, LoadedModel, ModelInfo } from "../types";
 
@@ -63,30 +63,51 @@ export default function ModelsView({ models, loaded, errors, onRefresh }: Props)
       {loaded.length === 0 ? (
         <p className="muted">Şu anda belleğe yüklü model yok. Model ilk istekte yüklenir, 5 dakika boşta kalınca boşaltılır.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Bellek</th>
-              <th>Yerleşim</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {loaded.map((m) => (
-              <tr key={m.model_id}>
-                <td>{m.model_id}</td>
-                <td>{bytes(m.size_bytes)}</td>
-                <td>{m.gpu_percent >= 100 ? "Tamamen GPU" : m.gpu_percent <= 0 ? "Tamamen CPU" : `%${m.gpu_percent} GPU / %${100 - m.gpu_percent} CPU`}</td>
-                <td>
-                  <button onClick={() => unload(m)} disabled={busy === m.model_id}>
-                    Bellekten boşalt
-                  </button>
-                </td>
+        <>
+          <div className="row">
+            <button
+              onClick={async () => {
+                setBusy("unload-all");
+                try {
+                  await api("POST", "/api/models/unload-all");
+                  await onRefresh();
+                  setError(null);
+                } catch (e) {
+                  setError(errorText(e));
+                } finally {
+                  setBusy(null);
+                }
+              }}
+              disabled={busy === "unload-all"}
+            >
+              {busy === "unload-all" ? "Boşaltılıyor…" : "Tümünü bellekte boşalt"}
+            </button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Bellek</th>
+                <th>Yerleşim</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {loaded.map((m) => (
+                <tr key={m.model_id}>
+                  <td>{m.model_id}</td>
+                  <td>{bytes(m.size_bytes)}</td>
+                  <td>{m.gpu_percent >= 100 ? "Tamamen GPU" : m.gpu_percent <= 0 ? "Tamamen CPU" : `%${m.gpu_percent} GPU / %${100 - m.gpu_percent} CPU`}</td>
+                  <td>
+                    <button onClick={() => unload(m)} disabled={busy === m.model_id}>
+                      Bellekten boşalt
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
 
       <h3>Yüklü modeller</h3>
@@ -137,6 +158,11 @@ export default function ModelsView({ models, loaded, errors, onRefresh }: Props)
           <p className="muted small">
             {dateTime(bench.report.created_at)} · soru seti {bench.report.prompts_version} · {bench.path}
           </p>
+          {bench.path && (
+            <button type="button" onClick={() => revealPath(bench.path!).catch((e) => setError(errorText(e)))}>
+              Ölçüm dosyasını klasörde aç
+            </button>
+          )}
           <BenchTable report={bench.report} />
         </>
       )}

@@ -21,6 +21,8 @@ def _conversation(row: Any, snippet: str | None = None) -> Conversation:
         title=row["title"],
         model_id=row["model_id"],
         archived=bool(row["archived"]),
+        workspace_id=row["workspace_id"] if "workspace_id" in row.keys() else "genel",
+        parent_id=row["parent_id"] if "parent_id" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         match_snippet=snippet,
@@ -40,6 +42,7 @@ def _message(row: Any) -> Message:
         model_id=row["model_id"],
         model_digest=row["model_digest"],
         metrics=json.loads(row["metrics_json"]) if row["metrics_json"] else None,
+        sources=json.loads(row["sources_json"]) if "sources_json" in row.keys() and row["sources_json"] else [],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -91,18 +94,55 @@ class Store:
         row = self.db.query_one("SELECT * FROM conversations WHERE id = ?", (conversation_id,))
         return _conversation(row) if row else None
 
-    def create_conversation(self, title: str | None, model_id: str | None) -> Conversation:
+    def create_conversation(
+        self, title: str | None, model_id: str | None, workspace_id: str = "genel", parent_id: str | None = None
+    ) -> Conversation:
         now = utcnow()
         cid = new_id()
+        ws = (workspace_id or "genel").strip() or "genel"
         with self.db.transaction() as c:
             c.execute(
-                "INSERT INTO conversations (id, title, model_id, archived, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
-                (cid, (title or DEFAULT_TITLE).strip() or DEFAULT_TITLE, model_id, now, now),
+                """INSERT INTO conversations (id, title, model_id, archived, workspace_id, created_at, updated_at, parent_id)
+                   VALUES (?, ?, ?, 0, ?, ?, ?, ?)""",
+                (cid, (title or DEFAULT_TITLE).strip() or DEFAULT_TITLE, model_id, ws, now, now, parent_id),
             )
         return self.get_conversation(cid)  # type: ignore[return-value]
 
+    def branch_conversation(self, conversation_id: str, *, up_to_message_id: str | None = None) -> Conversation:
+        src = self.get_conversation(conversation_id)
+        if src is None:
+            raise ValueError("Oturum yok.")
+        messages = self.list_messages(conversation_id)
+        if up_to_message_id:
+            kept: list[Message] = []
+            for m in messages:
+                kept.append(m)
+                if m.id == up_to_message_id:
+                    break
+            else:
+                raise ValueError("Checkpoint mesajı yok.")
+            messages = kept
+        branch = self.create_conversation(
+            f"{src.title} · dal",
+            src.model_id,
+            src.workspace_id,
+            parent_id=src.id,
+        )
+        for m in messages:
+            self.add_message(
+                branch.id,
+                m.role,
+                m.content,
+                m.status if m.status != "streaming" else "error",
+                m.provider_id,
+                m.model_id,
+                m.model_digest,
+                [s.model_dump() for s in m.sources] if m.sources else None,
+            )
+        return branch
+
     def update_conversation(self, conversation_id: str, fields: dict[str, Any]) -> Conversation | None:
-        allowed = {k: v for k, v in fields.items() if k in {"title", "archived", "model_id"} and v is not None}
+        allowed = {k: v for k, v in fields.items() if k in {"title", "archived", "model_id", "workspace_id"} and v is not None}
         if "title" in allowed:
             allowed["title"] = allowed["title"].strip()
         if "archived" in allowed:
@@ -146,15 +186,28 @@ class Store:
         provider_id: str | None = None,
         model_id: str | None = None,
         model_digest: str | None = None,
+        sources: list[dict] | None = None,
     ) -> Message:
         now = utcnow()
         mid = new_id()
         with self.db.transaction() as c:
             c.execute(
                 """INSERT INTO messages (id, conversation_id, role, content, status, provider_id, model_id,
-                                         model_digest, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (mid, conversation_id, role, content, status, provider_id, model_id, model_digest, now, now),
+                                         model_digest, sources_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    mid,
+                    conversation_id,
+                    role,
+                    content,
+                    status,
+                    provider_id,
+                    model_id,
+                    model_digest,
+                    json.dumps(sources, ensure_ascii=False) if sources else None,
+                    now,
+                    now,
+                ),
             )
             c.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         return self.get_message(mid)  # type: ignore[return-value]

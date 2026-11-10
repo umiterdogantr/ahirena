@@ -71,11 +71,41 @@ Etiketler nicemleme düzeyiyle sabitlenmiştir; `latest` kullanılmaz. `qwen3.5:
 
 ## Yetenekler (Aşama 2)
 
-Yetenek, `SKILL.md` ve uygulamaya özgü `capabilities.json` içeren bir klasördür. İçe aktarma çekirdek kodunu değiştirmez. Paket hangi aracı istediğini yazar; izin ayrı verilir. Betik çalıştırılmaz.
+Yetenek, `SKILL.md` ve uygulamaya özgü `capabilities.json` içeren bir klasördür. İçe aktarma çekirdek kodunu değiştirmez. Paket hangi aracı istediğini yazar; izin ayrı verilir. Betik çalıştırılmaz. Kaldırma kaydı ve veri klasöründeki paket kopyasını siler; MCP sunucusu da silinebilir. MCP araç izni geri alınabilir. Taslak aday silinince karantina klasörü de kalkar; içe aktarılınca aday `imported` olur. Tor SOCKS denetimi yalnızca yerel bağlantıyı dener, dış siteye gitmez. Ayarlar’daki dürüst durum özeti planlanan özellikleri açıkça gösterir; durum çubuğundan tüm model çalıştırmaları durdurulabilir.
 
-Denetlenmiş araçlar: `clock.now`, `files.read` (seçilen klasörün içi), `sql.query` ve `sql.tables` (yalnızca SELECT, Windows kimliği, parola yok). MCP sunucusu ayrı süreçte açılır, uygulamanın sırlarını almaz; araç listesi değişince eski izin düşer.
+Denetlenmiş araçlar: `clock.now`, `files.read` (seçilen klasörün içi), `sql.query` ve `sql.tables` (yalnızca SELECT, Windows kimliği, parola yok). SQL için çekirdek `pyodbc` taşır; makinede ODBC Driver 17 veya 18 for SQL Server kurulu olmalıdır. MCP sunucusu ayrı süreçte açılır, uygulamanın sırlarını almaz; araç listesi değişince eski izin düşer.
 
 Örnek paket: `examples\skills\saat`. SQL sunucusu `%LOCALAPPDATA%\com.ahirena.desktop\config.json` içindeki `sql` alanındadır.
+
+## Hafıza ve belgeler (Aşama 3)
+
+Hafıza, kullanıcının kaynak belirterek yazdığı kayıttır. Sohbet kendiliğinden hafızaya geçmez. Yeni kayıt eskisinin üzerine yazılmaz; düzeltme ve silme ayrıdır.
+
+Belgeler `.txt` ve `.md` olarak indekslenir. PDF, ofis ve görüntü ayrıştırılmaz. Arama sözcük indeksidir (`fts-1`); vektör indeksi yoktur ve varmış gibi skor üretilmez. Her kayıt bir çalışma alanına aittir, arama başka alanı getirmez. Belge silinince sözcük indeksi de silinir; diskteki dosya durur. Yarım kalan indeks, çekirdek açılışında sürdürülür. Belgeler ekranı açık/başarısız indeks işlerini gösterir; başarısızlar yeniden denenebilir. Model belleğe sığmazsa hata uzak modele geçmeden yerel çözüm önerir. Dosya ve klasör yolları için Windows yerel seçici kullanılabilir (yol elle de yazılabilir).
+
+Sohbet, seçilen çalışma alanındaki hafıza ve belgeleri aday olarak modele verir. Yetkisiz alandaki kayıt gönderilmez. Yanıtın altında kullanılan kaynaklar görünür; kaynakta yoksa kesinlik üretilmez.
+
+## Görevler ve ağ (Aşama 4)
+
+Görev durumları kuyruk, çalışıyor, onay bekliyor, duraklatıldı, bitti, hata, iptal ve uzlaştırma gerektirir. Dosya yazımı her seferinde onay ister; içerik değişince eski onay düşer. Kesinti sonrası çalışan görev `needs_reconciliation` olur; dış işlemin olmadığı varsayılmaz. Zaman ve tekrar Görevler ekranından yazılır; işçi yalnızca çekirdek açıkken çalışır. Bitti/hata/iptal görevleri tek tek veya toplu silinebilir; aktif görev silinmez. Ağ politikası (`offline`, Tor SOCKS) `config.json` içinde `network` alanındadır.
+
+Web okuma izinli alan adına bağlıdır. `127.0.0.1`, özel ağ ve bulut meta veri adresleri kapalıdır; yönlendirmeden sonra hedef yeniden denetlenir. Tor rotası SOCKS dinlemiyorsa iş başarısız biter, doğrudan internete düşülmez. Zamanlanmış görev yalnızca çekirdek açıkken işler; Windows açılış hizmeti kurulmaz. Playwright tarayıcı oturumu bu sürümde kapalıdır.
+
+## Gelişmiş etkileşim (Aşama 5)
+
+Görev dalı checkpoint’ten yeni görev açar; eski yazma onayı taşınmaz. Çevrimdışı oynatma kayıtlı doğrulanmış sonuçları okur, canlı araç çalıştırmaz. Yetenek taslağı karantinada aday üretir; izin ve içe aktarma olmadan etkinleşmez.
+
+Görüntü eki yalnızca vision yetenekli modele gider ve güvenilmeyen kaynaktır. OCR, TTS ve sürekli mikrofon bu sürümde planlandı; whisper.cpp kurulu değilse ses girişi açık görünmez. Sürekli ekran izleme kapalıdır.
+
+## Eğitim (Aşama 6)
+
+Eğitim kaydı hedef davranış, temel model ve veri sürümünü tutar. Çalıştırıcı yokken `start=true` reddedilir; durum `planned` kalır. Adaptör otomatik etkinleşmez. Konuşmalar modeli eğitmez. Bu cihazda LoRA hattı doğrulanmadan eğitim başlamış gibi gösterilmez.
+
+Sohbetteki asistan yanıtından **Düzeltme kaydet** ile sorun türü (kaynak, talimat, araç, model, eğitim, diğer) kaydedilir. Bu kayıt modeli eğitmez; Eğitim ekranında aday listesinde görünür. Belge kaynağı ve çıktı/yedek dosyası **Klasörde aç** ile Gezgin’de seçilir.
+
+## Yedek ve dışa aktarım
+
+Ayarlar ekranından SQLite yedeği veya kişisel dışa aktarım alınır. Çıktı `%LOCALAPPDATA%\com.ahirena.desktop\backups` veya `exports` altındadır. Token, parola ve model ağırlığı pakete girmez. Düzeltme adayları da dışa aktarıma girer. Arama indeksleri yeniden kurulabilir. Üretilen dosyalar **Çıktılar** ekranında görünür; diskte yoksa önizleme açılmaz. Veri sürücüsünde ~50 MiB’den az boş alan varsa yedek, dışa aktarım ve belge içe aktarma kontrollü hata verir; uzak modele geçilmez. Ağ politikası Ayarlar ve Görevler’den kaydedilir.
 
 ## Veri ve geri dönüş
 

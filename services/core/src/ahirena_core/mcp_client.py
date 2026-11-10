@@ -112,6 +112,11 @@ class McpRegistry:
             )
             raise McpError(str(e)) from e
 
+    def remove(self, server_id: str) -> dict:
+        self._raw(server_id)
+        self.db.query("DELETE FROM mcp_servers WHERE id = ?", (server_id,))
+        return {"removed": server_id}
+
     def grant(self, server_id: str, tool: str) -> dict:
         row = self._raw(server_id)
         if not row["tools_hash"]:
@@ -124,6 +129,15 @@ class McpRegistry:
         self.db.query(
             "UPDATE mcp_servers SET grants_json=?, enabled=1, updated_at=? WHERE id=?",
             (json.dumps(sorted(grants)), utcnow(), server_id),
+        )
+        return self._get(server_id)
+
+    def revoke(self, server_id: str, tool: str) -> dict:
+        row = self._raw(server_id)
+        grants = [g for g in json.loads(row["grants_json"]) if g != tool]
+        self.db.query(
+            "UPDATE mcp_servers SET grants_json=?, enabled=?, updated_at=? WHERE id=?",
+            (json.dumps(grants), 1 if grants else 0, utcnow(), server_id),
         )
         return self._get(server_id)
 

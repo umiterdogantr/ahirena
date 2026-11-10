@@ -342,6 +342,16 @@ pre {
   font-size: 13px;
 }
 
+.sources {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.sources ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 .thinking pre {
   white-space: pre-wrap;
   font-size: 12px;
@@ -436,6 +446,16 @@ th {
   align-items: center;
   gap: 12px;
   margin: 8px 0;
+}
+
+button.linkish {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
 }
 
 .settings label {

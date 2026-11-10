@@ -13,6 +13,8 @@ class Conversation(BaseModel):
     title: str
     model_id: str | None
     archived: bool
+    workspace_id: str = "genel"
+    parent_id: str | None = None
     created_at: str
     updated_at: str
     match_snippet: str | None = None
@@ -21,12 +23,22 @@ class Conversation(BaseModel):
 class ConversationCreate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     model_id: str | None = Field(default=None, max_length=200)
+    workspace_id: str = Field(default="genel", min_length=1, max_length=80)
 
 
 class ConversationUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     archived: bool | None = None
     model_id: str | None = Field(default=None, max_length=200)
+    workspace_id: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class MessageSource(BaseModel):
+    kind: Literal["memory", "document"]
+    id: str
+    title: str
+    path: str | None = None
+    text: str = ""
 
 
 class Message(BaseModel):
@@ -41,6 +53,7 @@ class Message(BaseModel):
     model_id: str | None
     model_digest: str | None
     metrics: dict[str, Any] | None
+    sources: list[MessageSource] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
@@ -49,6 +62,7 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
     model_id: str = Field(min_length=1, max_length=200)
     think: bool = False
+    image_path: str | None = Field(default=None, max_length=500)
 
 
 class CompareRequest(BaseModel):

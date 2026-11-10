@@ -46,3 +46,18 @@ export function errorText(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
 }
+
+/** Yerel dosyayı veya klasörü Windows Gezgini'nde açar. */
+export function revealPath(path: string): Promise<void> {
+  return invoke("reveal_path", { path });
+}
+
+/** Yerel dosya seçici; iptalde null. */
+export function pickFile(title?: string, extensions?: string[]): Promise<string | null> {
+  return invoke("pick_file", { title: title ?? null, extensions: extensions ?? null });
+}
+
+/** Yerel klasör seçici; iptalde null. */
+export function pickFolder(title?: string): Promise<string | null> {
+  return invoke("pick_folder", { title: title ?? null });
+}

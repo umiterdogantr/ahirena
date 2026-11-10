@@ -80,6 +80,13 @@ def register_phase2(app: FastAPI, settings: Settings) -> None:
         except SkillError as e:
             raise HTTPException(404, str(e)) from e
 
+    @app.delete("/api/skills/{skill_id}")
+    async def delete_skill(skill_id: str) -> dict:
+        try:
+            return skills().uninstall(skill_id)
+        except SkillError as e:
+            raise HTTPException(404, str(e)) from e
+
     @app.post("/api/skills/{skill_id}/call")
     async def call_skill(skill_id: str, body: CallBody) -> dict:
         try:
@@ -98,6 +105,13 @@ def register_phase2(app: FastAPI, settings: Settings) -> None:
         except McpError as e:
             raise HTTPException(400, str(e)) from e
 
+    @app.delete("/api/mcp/{server_id}")
+    async def delete_mcp(server_id: str) -> dict:
+        try:
+            return mcp().remove(server_id)
+        except McpError as e:
+            raise HTTPException(404, str(e)) from e
+
     @app.post("/api/mcp/{server_id}/refresh")
     async def refresh_mcp(server_id: str) -> dict:
         try:
@@ -109,6 +123,13 @@ def register_phase2(app: FastAPI, settings: Settings) -> None:
     async def grant_mcp(server_id: str, body: McpGrantBody) -> dict:
         try:
             return mcp().grant(server_id, body.tool)
+        except McpError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/mcp/{server_id}/revoke")
+    async def revoke_mcp(server_id: str, body: McpGrantBody) -> dict:
+        try:
+            return mcp().revoke(server_id, body.tool)
         except McpError as e:
             raise HTTPException(400, str(e)) from e
 

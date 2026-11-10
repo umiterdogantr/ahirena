@@ -93,6 +93,231 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE workspaces (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            created_by  TEXT NOT NULL DEFAULT 'local-user'
+        );
+        INSERT INTO workspaces (id, name, created_at, updated_at)
+        VALUES ('genel', 'Genel', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');
+
+        CREATE TABLE memory_items (
+            id            TEXT PRIMARY KEY,
+            workspace_id  TEXT NOT NULL REFERENCES workspaces(id),
+            body          TEXT NOT NULL,
+            source_ref    TEXT NOT NULL,
+            status        TEXT NOT NULL CHECK (status IN ('active', 'superseded')),
+            verified      INTEGER NOT NULL DEFAULT 1,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            created_by    TEXT NOT NULL DEFAULT 'local-user'
+        );
+        CREATE INDEX ix_memory_ws ON memory_items(workspace_id, status);
+        CREATE VIRTUAL TABLE memory_fts USING fts5(
+            search_text,
+            memory_id UNINDEXED,
+            workspace_id UNINDEXED,
+            tokenize = "unicode61 remove_diacritics 0"
+        );
+
+        CREATE TABLE documents (
+            id             TEXT PRIMARY KEY,
+            workspace_id   TEXT NOT NULL REFERENCES workspaces(id),
+            path           TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            media_type     TEXT NOT NULL,
+            byte_size      INTEGER NOT NULL,
+            content_hash   TEXT NOT NULL,
+            version        INTEGER NOT NULL,
+            encoding       TEXT NOT NULL,
+            index_version  TEXT NOT NULL,
+            deleted_at     TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            created_by     TEXT NOT NULL DEFAULT 'local-user',
+            UNIQUE (workspace_id, path)
+        );
+        CREATE TABLE chunks (
+            id            TEXT PRIMARY KEY,
+            document_id   TEXT NOT NULL REFERENCES documents(id),
+            version       INTEGER NOT NULL,
+            ordinal       INTEGER NOT NULL,
+            text          TEXT NOT NULL,
+            search_text   TEXT NOT NULL,
+            start_char    INTEGER NOT NULL,
+            end_char      INTEGER NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX ix_chunks_doc ON chunks(document_id, version);
+        CREATE VIRTUAL TABLE chunk_fts USING fts5(
+            search_text,
+            chunk_id UNINDEXED,
+            document_id UNINDEXED,
+            workspace_id UNINDEXED,
+            tokenize = "unicode61 remove_diacritics 0"
+        );
+        CREATE TABLE index_jobs (
+            id            TEXT PRIMARY KEY,
+            document_id   TEXT NOT NULL,
+            version       INTEGER NOT NULL,
+            kind          TEXT NOT NULL CHECK (kind IN ('index', 'purge')),
+            state         TEXT NOT NULL CHECK (state IN ('pending', 'done', 'failed')),
+            error         TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        );
+        """,
+    ),
+    (
+        4,
+        """
+        ALTER TABLE conversations ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'genel';
+        ALTER TABLE messages ADD COLUMN sources_json TEXT;
+        """,
+    ),
+    (
+        5,
+        """
+        CREATE TABLE tasks (
+            id                 TEXT PRIMARY KEY,
+            title              TEXT NOT NULL,
+            kind               TEXT NOT NULL,
+            state              TEXT NOT NULL CHECK (state IN (
+                'queued','running','waiting_approval','paused','succeeded','failed','cancelled','needs_reconciliation'
+            )),
+            workspace_id       TEXT NOT NULL DEFAULT 'genel',
+            params_json        TEXT NOT NULL,
+            grant_json         TEXT NOT NULL DEFAULT '{}',
+            route              TEXT NOT NULL DEFAULT 'direct' CHECK (route IN ('direct','tor')),
+            schedule_at        TEXT,
+            interval_seconds   INTEGER,
+            timezone           TEXT NOT NULL DEFAULT 'Europe/Istanbul',
+            missed_policy      TEXT NOT NULL DEFAULT 'skip' CHECK (missed_policy IN ('skip','run_once')),
+            checkpoint_json    TEXT,
+            last_error         TEXT,
+            created_at         TEXT NOT NULL,
+            updated_at         TEXT NOT NULL
+        );
+        CREATE INDEX ix_tasks_state ON tasks(state, schedule_at);
+        CREATE TABLE task_steps (
+            id               TEXT PRIMARY KEY,
+            task_id          TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            ordinal          INTEGER NOT NULL,
+            tool             TEXT NOT NULL,
+            intent_json      TEXT NOT NULL,
+            idempotency_key  TEXT NOT NULL,
+            state            TEXT NOT NULL CHECK (state IN ('intended','applied','verified','uncertain','skipped')),
+            result_json      TEXT,
+            error            TEXT,
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        CREATE TABLE approvals (
+            id             TEXT PRIMARY KEY,
+            task_id        TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            action         TEXT NOT NULL,
+            target_summary TEXT NOT NULL,
+            params_hash    TEXT NOT NULL,
+            decision       TEXT NOT NULL CHECK (decision IN ('pending','granted','denied')),
+            created_at     TEXT NOT NULL,
+            decided_at     TEXT
+        );
+        """,
+    ),
+    (
+        6,
+        """
+        ALTER TABLE tasks ADD COLUMN parent_id TEXT REFERENCES tasks(id);
+        ALTER TABLE conversations ADD COLUMN parent_id TEXT REFERENCES conversations(id);
+        CREATE TABLE skill_candidates (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            description   TEXT NOT NULL,
+            tools_json    TEXT NOT NULL,
+            package_dir   TEXT NOT NULL,
+            content_hash  TEXT NOT NULL,
+            prompt        TEXT NOT NULL,
+            status        TEXT NOT NULL CHECK (status IN ('candidate','discarded','imported')),
+            created_at    TEXT NOT NULL
+        );
+        CREATE TABLE attachments (
+            id               TEXT PRIMARY KEY,
+            conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            message_id       TEXT,
+            path             TEXT NOT NULL,
+            media_type       TEXT NOT NULL,
+            byte_size        INTEGER NOT NULL,
+            content_hash     TEXT NOT NULL,
+            untrusted        INTEGER NOT NULL DEFAULT 1,
+            created_at       TEXT NOT NULL
+        );
+        """,
+    ),
+    (
+        7,
+        """
+        CREATE TABLE training_runs (
+            id            TEXT PRIMARY KEY,
+            base_model    TEXT NOT NULL,
+            goal          TEXT NOT NULL,
+            data_version  TEXT NOT NULL,
+            status        TEXT NOT NULL CHECK (status IN ('planned','running','failed','evaluated','approved','rejected')),
+            settings_json TEXT NOT NULL,
+            metrics_json  TEXT,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        );
+        CREATE TABLE adapters (
+            id             TEXT PRIMARY KEY,
+            training_id    TEXT REFERENCES training_runs(id),
+            base_model     TEXT NOT NULL,
+            path           TEXT NOT NULL,
+            status         TEXT NOT NULL CHECK (status IN ('candidate','approved','active','rolled_back')),
+            created_at     TEXT NOT NULL
+        );
+        """,
+    ),
+    (
+        8,
+        """
+        CREATE TABLE artifacts (
+            id            TEXT PRIMARY KEY,
+            kind          TEXT NOT NULL,
+            title         TEXT NOT NULL,
+            path          TEXT NOT NULL,
+            media_type    TEXT NOT NULL,
+            byte_size     INTEGER NOT NULL,
+            content_hash  TEXT NOT NULL,
+            task_id       TEXT,
+            version       INTEGER NOT NULL DEFAULT 1,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX ix_artifacts_created ON artifacts(created_at);
+        """,
+    ),
+    (
+        9,
+        """
+        CREATE TABLE feedback_items (
+            id               TEXT PRIMARY KEY,
+            conversation_id  TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+            message_id       TEXT,
+            issue_type       TEXT NOT NULL CHECK (issue_type IN (
+                'missing_source','bad_instruction','tool_failure','wrong_model','needs_training','other'
+            )),
+            note             TEXT NOT NULL,
+            suggested_fix   TEXT,
+            status           TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','reviewed','dismissed')),
+            created_at       TEXT NOT NULL
+        );
+        CREATE INDEX ix_feedback_created ON feedback_items(created_at);
+        """,
+    ),
 ]
 
 

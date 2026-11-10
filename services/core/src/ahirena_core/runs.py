@@ -58,6 +58,10 @@ class RunManager:
         run.task.cancel()
         return True
 
+    def cancel_all(self) -> dict[str, Any]:
+        cancelled = [rid for rid in list(self._runs) if self.cancel(rid)]
+        return {"cancelled": cancelled, "count": len(cancelled)}
+
     async def stream(
         self,
         provider: ModelProvider,

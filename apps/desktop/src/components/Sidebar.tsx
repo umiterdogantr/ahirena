@@ -19,6 +19,11 @@ const NAV: { id: View; label: string }[] = [
   { id: "models", label: "Modeller" },
   { id: "compare", label: "Karşılaştır" },
   { id: "skills", label: "Yetenekler" },
+  { id: "memory", label: "Hafıza" },
+  { id: "documents", label: "Belgeler" },
+  { id: "tasks", label: "Görevler" },
+  { id: "outputs", label: "Çıktılar" },
+  { id: "training", label: "Eğitim" },
   { id: "settings", label: "Ayarlar" },
 ];
 

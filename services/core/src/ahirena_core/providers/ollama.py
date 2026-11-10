@@ -118,9 +118,15 @@ class OllamaProvider:
     async def chat_stream(
         self, model_id: str, messages: list[ChatMessage], options: ChatOptions
     ) -> AsyncIterator[ChatEvent]:
+        payload_messages = []
+        for m in messages:
+            item: dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.images:
+                item["images"] = m.images
+            payload_messages.append(item)
         body: dict[str, Any] = {
             "model": model_id,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": payload_messages,
             "stream": True,
         }
         if options.context_length:
@@ -163,6 +169,14 @@ def _error_text(status: int, text: str) -> str:
         msg = json.loads(text).get("error") or text
     except (ValueError, AttributeError):
         msg = text
+    msg = str(msg).strip()
+    low = msg.lower()
+    if any(k in low for k in ("out of memory", "oom", "cuda error", "insufficient memory", "failed to allocate", "vram")):
+        return (
+            f"Model belleğe sığmadı ({status}): {msg}. "
+            "Bağlam sınırını düşürün, daha küçük model seçin veya bellekteki modeli boşaltın. "
+            "Uzak modele geçilmez."
+        )
     return f"Ollama hatası ({status}): {msg}".strip()
 
 

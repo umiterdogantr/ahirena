@@ -64,6 +64,7 @@ class ProviderHealth:
 class ChatMessage:
     role: Literal["system", "user", "assistant"]
     content: str
+    images: list[str] | None = None
 
 
 @dataclass

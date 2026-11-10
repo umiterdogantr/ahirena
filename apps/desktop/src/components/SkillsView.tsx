@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText } from "../api";
+import { api, errorText, pickFile, pickFolder } from "../api";
 
 interface Grant {
   permission: string;
@@ -51,6 +51,8 @@ export default function SkillsView() {
   const [query, setQuery] = useState("SELECT 1 AS ok");
   const [mcpCmd, setMcpCmd] = useState("");
   const [mcpArgs, setMcpArgs] = useState("");
+  const [draftPrompt, setDraftPrompt] = useState("");
+  const [candidates, setCandidates] = useState<{ id: string; name: string; description: string; tools: string[]; package_dir: string }[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +61,7 @@ export default function SkillsView() {
       setSkills(await api<Skill[]>("GET", "/api/skills"));
       setServers(await api<McpServer[]>("GET", "/api/mcp"));
       setSql(await api<SqlStatus>("GET", "/api/sql"));
+      setCandidates(await api("GET", "/api/skills/candidates"));
       setError(null);
     } catch (e) {
       setError(errorText(e));
@@ -106,9 +109,61 @@ export default function SkillsView() {
         Paket klasörü (SKILL.md + capabilities.json)
         <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\paketler\saat" />
       </label>
-      <button className="primary" onClick={() => run("İçe aktarıldı", () => api("POST", "/api/skills/import", { path }))}>
-        İçe aktar
+      <div className="row">
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              const p = await pickFolder("Yetenek paketi klasörü");
+              if (p) setPath(p);
+            } catch (e) {
+              setError(errorText(e));
+            }
+          }}
+        >
+          Klasör seç…
+        </button>
+        <button className="primary" onClick={() => run("İçe aktarıldı", () => api("POST", "/api/skills/import", { path }))}>
+          İçe aktar
+        </button>
+      </div>
+      <h3>Taslak yetenek</h3>
+      <p className="muted small">Doğal dil taslak üretir; aday karantinada kalır. İzin ve içe aktarma olmadan çalışmaz.</p>
+      <label>
+        Ne yapsın?
+        <textarea rows={2} value={draftPrompt} onChange={(e) => setDraftPrompt(e.target.value)} />
+      </label>
+      <button
+        onClick={() =>
+          run("Taslak", async () => {
+            const out = await api("POST", "/api/skills/draft", { prompt: draftPrompt });
+            setDraftPrompt("");
+            return out;
+          })
+        }
+      >
+        Taslak üret
       </button>
+      {candidates.map((c) => (
+        <article key={c.id} className="facts">
+          <h3>
+            {c.name} · aday
+          </h3>
+          <p>{c.description}</p>
+          <p className="muted small">
+            Araçlar: {c.tools.join(", ")} · {c.package_dir}
+          </p>
+          <div className="row">
+            <button
+              className="primary"
+              onClick={() => run("İçe aktarıldı", () => api("POST", "/api/skills/import", { path: c.package_dir }))}
+            >
+              İçe aktar
+            </button>
+            <button onClick={() => run("Silindi", () => api("POST", `/api/skills/candidates/${c.id}/discard`))}>Adayı sil</button>
+          </div>
+        </article>
+      ))}
 
       {skills.length === 0 && <p className="muted">Yüklü yetenek yok. Örnek: depodaki examples\skills\saat</p>}
       {skills.map((skill) => (
@@ -124,6 +179,21 @@ export default function SkillsView() {
             <label>
               Okunacak klasörler (noktalı virgülle)
               <input value={roots[skill.id] || ""} onChange={(e) => setRoots({ ...roots, [skill.id]: e.target.value })} />
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const p = await pickFolder("Okuma kökü");
+                    if (!p) return;
+                    const prev = (roots[skill.id] || "").split(";").map((s) => s.trim()).filter(Boolean);
+                    if (!prev.includes(p)) setRoots({ ...roots, [skill.id]: [...prev, p].join(";") });
+                  } catch (e) {
+                    setError(errorText(e));
+                  }
+                }}
+              >
+                Klasör ekle…
+              </button>
             </label>
           )}
           <div className="row">
@@ -131,6 +201,12 @@ export default function SkillsView() {
               İzin ver ve aç
             </button>
             <button onClick={() => run("Kapatıldı", () => api("POST", `/api/skills/${skill.id}/disable`))}>Kapat</button>
+            <button
+              onClick={() => run("Kaldırıldı", () => api("DELETE", `/api/skills/${skill.id}`))}
+              title="Kayıt ve uygulama veri klasöründeki paket kopyası silinir"
+            >
+              Kaldır
+            </button>
             {skill.tools.includes("clock.now") && (
               <button
                 onClick={() =>
@@ -170,6 +246,7 @@ export default function SkillsView() {
         Veritabanı
         <input value={sql.database} onChange={(e) => setSql({ ...sql, database: e.target.value })} />
       </label>
+      <p className="muted small">Durum: {sql.enabled ? "açık" : "kapalı"} · yazma {sql.writes}</p>
       <div className="row">
         <button
           className="primary"
@@ -177,7 +254,14 @@ export default function SkillsView() {
             run("SQL kaydedildi", () => api("PUT", "/api/sql", { enabled: true, server: sql.server, database: sql.database, driver: "" }))
           }
         >
-          Kaydet
+          Kaydet ve aç
+        </button>
+        <button
+          onClick={() =>
+            run("SQL kapatıldı", () => api("PUT", "/api/sql", { enabled: false, server: sql.server, database: sql.database, driver: "" }))
+          }
+        >
+          Kapat
         </button>
         <button onClick={() => run("Bağlantı", () => api("POST", "/api/sql/probe"))}>Bağlantıyı dene</button>
       </div>
@@ -187,6 +271,19 @@ export default function SkillsView() {
       <label>
         Komut (exe yolu)
         <input value={mcpCmd} onChange={(e) => setMcpCmd(e.target.value)} />
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              const p = await pickFile("MCP komutu", ["exe", "cmd", "bat"]);
+              if (p) setMcpCmd(p);
+            } catch (e) {
+              setError(errorText(e));
+            }
+          }}
+        >
+          Exe seç…
+        </button>
       </label>
       <label>
         Argümanlar (boşlukla)
@@ -213,13 +310,20 @@ export default function SkillsView() {
           {server.last_error && <p className="error-inline">{server.last_error}</p>}
           <div className="row">
             <button onClick={() => run("Liste", () => api("POST", `/api/mcp/${server.id}/refresh`))}>Listeyi yenile</button>
+            <button onClick={() => run("Silindi", () => api("DELETE", `/api/mcp/${server.id}`))}>Sil</button>
           </div>
           {server.tools.map((tool) => (
             <div key={tool.name} className="row">
               <span>
                 {tool.name} {server.grants.includes(tool.name) ? "· izinli" : ""}
               </span>
-              <button onClick={() => run("İzin", () => api("POST", `/api/mcp/${server.id}/grant`, { tool: tool.name }))}>İzin ver</button>
+              {server.grants.includes(tool.name) ? (
+                <button onClick={() => run("İzin alındı", () => api("POST", `/api/mcp/${server.id}/revoke`, { tool: tool.name }))}>
+                  İzni geri al
+                </button>
+              ) : (
+                <button onClick={() => run("İzin", () => api("POST", `/api/mcp/${server.id}/grant`, { tool: tool.name }))}>İzin ver</button>
+              )}
             </div>
           ))}
         </article>

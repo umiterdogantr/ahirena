@@ -130,7 +130,29 @@ class SkillRegistry:
                        VALUES (?, '1', ?, ?, 0, ?, ?, ?, ?)""",
                     (name, name, description, str(dest), digest, json.dumps(tools), now),
                 )
+        from .skilldraft import mark_imported_by_path
+
+        mark_imported_by_path(self.db, str(src))
         return self.get(name)
+
+    def uninstall(self, skill_id: str) -> dict:
+        skill = self.get(skill_id)
+        package_dir = Path(skill["package_dir"]) if skill.get("package_dir") else None
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM skill_grants WHERE skill_id = ?", (skill_id,))
+            c.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
+        if package_dir and package_dir.is_dir():
+            root = self.root.resolve()
+            try:
+                package_dir.resolve().relative_to(root)
+            except ValueError:
+                pass
+            else:
+                parent = package_dir.parent
+                shutil.rmtree(package_dir, ignore_errors=True)
+                if parent.is_dir() and parent != root and not any(parent.iterdir()):
+                    shutil.rmtree(parent, ignore_errors=True)
+        return {"removed": skill_id, "was_enabled": skill["enabled"]}
 
     def set_enabled(self, skill_id: str, enabled: bool, grants: list[dict] | None = None) -> dict:
         skill = self.get(skill_id)
@@ -216,6 +238,7 @@ class SkillRegistry:
             "name": row["name"],
             "description": row["description"],
             "enabled": bool(row["enabled"]),
+            "package_dir": row["package_dir"],
             "content_hash": row["content_hash"],
             "tools": json.loads(row["tools_json"]),
             "grants": [{"permission": g["permission"], "scope": json.loads(g["scope_json"])} for g in grants],

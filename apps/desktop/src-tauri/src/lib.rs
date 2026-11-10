@@ -4,6 +4,8 @@ use core::{CoreHandle, CoreStatus};
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::process::Command;
 use tauri::{ipc::Channel, RunEvent, State};
 
 #[derive(Serialize)]
@@ -24,6 +26,60 @@ fn check_path(path: &str) -> Result<(), String> {
 #[tauri::command]
 fn core_status(core: State<'_, CoreHandle>) -> CoreStatus {
     core.status()
+}
+
+/// Yerel dosya veya klasörü Windows Gezgini'nde gösterir. Yalnızca var olan mutlak yollar.
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed.contains('\0') {
+        return Err("Geçersiz yol.".into());
+    }
+    let p = PathBuf::from(trimmed);
+    if !p.is_absolute() {
+        return Err("Yalnızca mutlak yol açılır.".into());
+    }
+    if !p.exists() {
+        return Err("Dosya veya klasör bulunamadı.".into());
+    }
+    let display = p.to_string_lossy().to_string();
+    let status = if p.is_dir() {
+        Command::new("explorer.exe").arg(&display).status()
+    } else {
+        Command::new("explorer.exe")
+            .arg(format!("/select,{display}"))
+            .status()
+    }
+    .map_err(|e| format!("Gezgin açılamadı: {e}"))?;
+    if !status.success() {
+        return Err("Gezgin komutu başarısız.".into());
+    }
+    Ok(())
+}
+
+/// Yerel Windows dosya seçici. İptalde null.
+#[tauri::command]
+fn pick_file(title: Option<String>, extensions: Option<Vec<String>>) -> Result<Option<String>, String> {
+    let mut dialog = rfd::FileDialog::new().set_title(title.unwrap_or_else(|| "Dosya seç".into()));
+    if let Some(exts) = extensions {
+        let clean: Vec<String> = exts
+            .into_iter()
+            .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+            .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric()))
+            .collect();
+        if !clean.is_empty() {
+            let refs: Vec<&str> = clean.iter().map(|s| s.as_str()).collect();
+            dialog = dialog.add_filter("Dosyalar", &refs);
+        }
+    }
+    Ok(dialog.pick_file().map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Yerel Windows klasör seçici. İptalde null.
+#[tauri::command]
+fn pick_folder(title: Option<String>) -> Result<Option<String>, String> {
+    let dialog = rfd::FileDialog::new().set_title(title.unwrap_or_else(|| "Klasör seç".into()));
+    Ok(dialog.pick_folder().map(|p| p.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
@@ -142,7 +198,14 @@ pub fn run() {
     let core = CoreHandle::start();
     let app = tauri::Builder::default()
         .manage(core)
-        .invoke_handler(tauri::generate_handler![core_status, api, api_stream])
+        .invoke_handler(tauri::generate_handler![
+            core_status,
+            api,
+            api_stream,
+            reveal_path,
+            pick_file,
+            pick_folder
+        ])
         .build(tauri::generate_context!())
         .expect("Tauri uygulaması başlatılamadı");
     app.run(|handle, event| {

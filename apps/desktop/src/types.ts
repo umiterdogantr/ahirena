@@ -5,9 +5,18 @@ export interface Conversation {
   title: string;
   model_id: string | null;
   archived: boolean;
+  workspace_id: string;
   created_at: string;
   updated_at: string;
   match_snippet?: string | null;
+}
+
+export interface MessageSource {
+  kind: "memory" | "document";
+  id: string;
+  title: string;
+  path?: string | null;
+  text: string;
 }
 
 export interface Metrics {
@@ -39,6 +48,7 @@ export interface Message {
   model_id: string | null;
   model_digest: string | null;
   metrics: Metrics | null;
+  sources?: MessageSource[];
   created_at: string;
   updated_at: string;
 }
@@ -87,6 +97,17 @@ export interface Health {
   config_path: string;
   data_dir: string;
   active_runs: string[];
+  network?: { offline: boolean; tor_socks: string };
+  disk?: { free_mib: number; free_bytes: number; ok: boolean; min_free_bytes: number; path: string };
+  tasks?: {
+    worker: string;
+    os_autostart: boolean;
+    queued: number;
+    running: number;
+    waiting_approval: number;
+    needs_reconciliation: number;
+    attention: number;
+  };
 }
 
 export type Theme = "system" | "light" | "dark";
@@ -105,7 +126,7 @@ export interface CoreStatus {
 }
 
 export type StreamEvent =
-  | { event: "run"; data: { run_id: string; model_id: string; user_message?: Message; assistant_message_id?: string; context_dropped_messages?: number } }
+  | { event: "run"; data: { run_id: string; model_id: string; user_message?: Message; assistant_message_id?: string; context_dropped_messages?: number; sources?: MessageSource[] } }
   | { event: "thinking"; data: { delta: string } }
   | { event: "token"; data: { delta: string } }
   | { event: "done"; data: { run_id: string; status: MessageStatus; error: string | null; metrics: Metrics } }

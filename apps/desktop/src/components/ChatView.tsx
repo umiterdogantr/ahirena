@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { api, cancelRun, errorText, stream } from "../api";
+import { api, cancelRun, errorText, pickFile, revealPath, stream } from "../api";
 import { metricsLine, shortDigest } from "../format";
-import type { AppSettings, Conversation, Message, ModelInfo, StreamEvent } from "../types";
+import type { AppSettings, Conversation, Message, MessageSource, ModelInfo, StreamEvent } from "../types";
 import Markdown from "./Markdown";
 import ModelPicker from "./ModelPicker";
 
@@ -14,6 +14,7 @@ interface Props {
   onCreated: (id: string) => void;
   onUpdated: () => void;
   onRunning: (running: boolean) => void;
+  onSelect?: (id: string) => void;
 }
 
 interface RunState {
@@ -35,19 +36,28 @@ function placeholder(role: "user" | "assistant", content: string, model: string 
     model_id: model,
     model_digest: null,
     metrics: null,
+    sources: [],
     created_at: now,
     updated_at: now,
   };
 }
 
-export default function ChatView({ conversationId, models, ollamaOk, runtimeError, settings, onCreated, onUpdated, onRunning }: Props) {
+export default function ChatView({ conversationId, models, ollamaOk, runtimeError, settings, onCreated, onUpdated, onRunning, onSelect }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [model, setModel] = useState<string | null>(null);
   const [think, setThink] = useState(false);
   const [input, setInput] = useState("");
+  const [imagePath, setImagePath] = useState("");
+  const [feedbackFor, setFeedbackFor] = useState<string | null>(null);
+  const [feedbackIssue, setFeedbackIssue] = useState("missing_source");
+  const [feedbackNote, setFeedbackNote] = useState("");
+  const [feedbackFix, setFeedbackFix] = useState("");
+  const [feedbackOk, setFeedbackOk] = useState<string | null>(null);
   const [run, setRun] = useState<RunState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  const [workspaceId, setWorkspaceId] = useState("genel");
   const skipReload = useRef<string | null>(null);
   const pendingCancel = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -55,6 +65,12 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
 
   const caps = models.find((m) => m.model_id === model)?.capabilities ?? [];
   const canThink = caps.includes("thinking");
+
+  useEffect(() => {
+    api<{ id: string; name: string }[]>("GET", "/api/workspaces")
+      .then(setWorkspaces)
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (conversationId && skipReload.current === conversationId) return;
@@ -74,6 +90,7 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
         ]);
         if (cancelled) return;
         setMessages(msgs);
+        setWorkspaceId(conv.workspace_id || "genel");
         setModel(conv.model_id ?? settings.default_model ?? models[0]?.model_id ?? null);
         stickToBottom.current = true;
       } catch (e) {
@@ -113,7 +130,7 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
     let cid = conversationId;
     try {
       if (!cid) {
-        const c = await api<Conversation>("POST", "/api/conversations", { model_id: model });
+        const c = await api<Conversation>("POST", "/api/conversations", { model_id: model, workspace_id: workspaceId });
         cid = c.id;
         skipReload.current = cid;
         onCreated(cid);
@@ -139,7 +156,12 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
           setMessages((ms) => {
             const copy = ms.slice();
             if (e.data.user_message) copy[copy.length - 2] = e.data.user_message;
-            if (e.data.assistant_message_id) copy[copy.length - 1] = { ...copy[copy.length - 1], id: e.data.assistant_message_id };
+            if (e.data.assistant_message_id)
+              copy[copy.length - 1] = {
+                ...copy[copy.length - 1],
+                id: e.data.assistant_message_id,
+                sources: e.data.sources ?? copy[copy.length - 1].sources,
+              };
             return copy;
           });
           if (e.data.context_dropped_messages)
@@ -161,7 +183,18 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
     };
 
     try {
-      await stream(`/api/conversations/${cid}/chat`, { content, model_id: model, provider_id: "ollama", think: canThink && think }, onEvent);
+      await stream(
+        `/api/conversations/${cid}/chat`,
+        {
+          content,
+          model_id: model,
+          provider_id: "ollama",
+          think: canThink && think,
+          image_path: imagePath.trim() || null,
+        },
+        onEvent,
+      );
+      setImagePath("");
     } catch (e) {
       patchAssistant((m) => (m.status === "streaming" ? { ...m, status: "error", error: errorText(e) } : m));
     } finally {
@@ -187,10 +220,51 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
     <section className="chat">
       <header className="chat-header">
         <ModelPicker models={models} value={model} onChange={setModel} disabled={!!run} />
+        <label className="check">
+          Çalışma alanı
+          <select
+            value={workspaceId}
+            disabled={!!run}
+            onChange={async (e) => {
+              const id = e.target.value;
+              setWorkspaceId(id);
+              if (conversationId) {
+                try {
+                  await api("PATCH", `/api/conversations/${conversationId}`, { workspace_id: id });
+                } catch (err) {
+                  setError(errorText(err));
+                }
+              }
+            }}
+          >
+            {workspaces.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+        </label>
         {canThink && (
           <label className="check" title="Model düşünme çıktısı üretir; yanıt süresi uzar.">
             <input type="checkbox" checked={think} onChange={(e) => setThink(e.target.checked)} disabled={!!run} /> Düşünme
           </label>
+        )}
+        {conversationId && (
+          <button
+            disabled={!!run}
+            title="Bu oturumdan yeni dal açar; önceki mesajları kopyalar"
+            onClick={async () => {
+              try {
+                const c = await api<Conversation>("POST", `/api/conversations/${conversationId}/branch`, {});
+                onSelect?.(c.id);
+                onUpdated();
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Dal aç
+          </button>
         )}
       </header>
 
@@ -246,6 +320,45 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
             )}
             {m.status === "cancelled" && <div className="badge">Durduruldu{m.content ? " — yanıt yarım" : ""}</div>}
             {m.status === "error" && <div className="error-inline">{m.error ?? "Hata"}</div>}
+            {m.role === "assistant" && (m.sources?.length ?? 0) > 0 && (
+              <details className="sources">
+                <summary>Kaynaklar ({m.sources!.length})</summary>
+                <ul>
+                  {m.sources!.map((s: MessageSource, i) => (
+                    <li key={`${s.kind}-${s.id}-${i}`}>
+                      <strong>{s.kind === "document" ? "Belge" : "Hafıza"}</strong> · {s.title}
+                      {s.path ? (
+                        <div className="row">
+                          <span className="muted small">{s.path}</span>
+                          <button
+                            type="button"
+                            className="linkish"
+                            onClick={() => revealPath(s.path!).catch((e) => setError(errorText(e)))}
+                          >
+                            Klasörde aç
+                          </button>
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {m.role === "assistant" && m.status !== "streaming" && !m.id.startsWith("tmp-") && (
+              <div className="row">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFeedbackFor(m.id);
+                    setFeedbackNote("");
+                    setFeedbackFix("");
+                    setFeedbackOk(null);
+                  }}
+                >
+                  Düzeltme kaydet
+                </button>
+              </div>
+            )}
             {m.role === "assistant" && m.status !== "streaming" && (
               <footer className="msg-meta" title={m.model_digest ? `digest: ${m.model_digest}` : undefined}>
                 {m.model_id} {m.model_digest ? `(${shortDigest(m.model_digest)})` : ""} {metricsLine(m.metrics) && `· ${metricsLine(m.metrics)}`}
@@ -255,6 +368,59 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
         ))}
       </div>
 
+      {feedbackFor && (
+        <div className="facts">
+          <h3>Düzeltme adayı</h3>
+          <p className="muted small">Model ağırlığını değiştirmez. Önce sorun türü kaydedilir; eğitim ayrı ve onaylıdır.</p>
+          <label>
+            Sorun türü
+            <select value={feedbackIssue} onChange={(e) => setFeedbackIssue(e.target.value)}>
+              <option value="missing_source">Kaynak eksikliği</option>
+              <option value="bad_instruction">Hatalı talimat</option>
+              <option value="tool_failure">Başarısız araç</option>
+              <option value="wrong_model">Yanlış model</option>
+              <option value="needs_training">Eğitim ihtiyacı</option>
+              <option value="other">Diğer</option>
+            </select>
+          </label>
+          <label>
+            Ne yanlıştı?
+            <textarea rows={3} value={feedbackNote} onChange={(e) => setFeedbackNote(e.target.value)} />
+          </label>
+          <label>
+            Önerilen doğru yanıt (isteğe bağlı)
+            <textarea rows={3} value={feedbackFix} onChange={(e) => setFeedbackFix(e.target.value)} />
+          </label>
+          <div className="row">
+            <button
+              className="primary"
+              onClick={async () => {
+                try {
+                  await api("POST", "/api/feedback", {
+                    issue_type: feedbackIssue,
+                    note: feedbackNote,
+                    suggested_fix: feedbackFix,
+                    message_id: feedbackFor,
+                    conversation_id: conversationId,
+                  });
+                  setFeedbackOk("Düzeltme kaydedildi (eğitim başlamadı).");
+                  setFeedbackFor(null);
+                  setError(null);
+                } catch (e) {
+                  setError(errorText(e));
+                }
+              }}
+            >
+              Kaydet
+            </button>
+            <button type="button" onClick={() => setFeedbackFor(null)}>
+              Vazgeç
+            </button>
+          </div>
+        </div>
+      )}
+
+      {feedbackOk && <div className="notice">{feedbackOk}</div>}
       {notice && <div className="notice">{notice}</div>}
       {error && <div className="error-inline">{error}</div>}
 
@@ -272,6 +438,29 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
           disabled={!model}
           rows={3}
         />
+        <label className="check">
+          Görüntü yolu
+          <input
+            value={imagePath}
+            onChange={(e) => setImagePath(e.target.value)}
+            placeholder="vision modeli yoksa reddedilir; OCR değildir"
+            disabled={!!run}
+          />
+          <button
+            type="button"
+            disabled={!!run}
+            onClick={async () => {
+              try {
+                const p = await pickFile("Görüntü seç", ["png", "jpg", "jpeg", "webp", "gif"]);
+                if (p) setImagePath(p);
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Seç…
+          </button>
+        </label>
         {run ? (
           <button className="danger" onClick={stop} disabled={run.stopping}>
             {run.stopping ? "Durduruluyor…" : "Durdur"}

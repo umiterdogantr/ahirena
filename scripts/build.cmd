@@ -11,7 +11,7 @@ echo [1/3] Cekirdek paketleniyor (PyInstaller)...
 pushd services\core
 uv sync --frozen || (popd & exit /b 1)
 uv run pyinstaller --noconfirm --clean --onefile --name ahirena-core --distpath build\dist --workpath build\work --specpath build ^
-  --paths src --collect-submodules ahirena_core packaging\launcher.py || (popd & exit /b 1)
+  --paths src --collect-submodules ahirena_core --hidden-import pyodbc packaging\launcher.py || (popd & exit /b 1)
 uv run pytest -m packaged -q || (popd & exit /b 1)
 popd
 if not exist "%BIN%" mkdir "%BIN%"

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { api, errorText } from "../api";
+import { useEffect, useState } from "react";
+import { api, errorText, revealPath } from "../api";
 import type { AppSettings, Health, ModelInfo, Theme } from "../types";
 import ModelPicker from "./ModelPicker";
 
@@ -22,6 +22,25 @@ interface Props {
 export default function SettingsView({ settings, models, health, onSaved }: Props) {
   const [draft, setDraft] = useState<AppSettings>(settings);
   const [state, setState] = useState<{ saving: boolean; message: string | null; error: string | null }>({ saving: false, message: null, error: null });
+  const [lastPath, setLastPath] = useState<string | null>(null);
+  const [media, setMedia] = useState<Record<string, { available?: boolean; status?: string; note?: string }> | null>(null);
+  const [offline, setOffline] = useState(false);
+  const [torSocks, setTorSocks] = useState("127.0.0.1:9050");
+  const [torListening, setTorListening] = useState(false);
+  const [diag, setDiag] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    api<Record<string, { available?: boolean; status?: string; note?: string }>>("GET", "/api/media")
+      .then(setMedia)
+      .catch(() => undefined);
+    api<{ offline: boolean; tor_socks: string; tor_listening: boolean }>("GET", "/api/network")
+      .then((n) => {
+        setOffline(n.offline);
+        setTorSocks(n.tor_socks);
+        setTorListening(n.tor_listening);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const save = async () => {
     setState({ saving: true, message: null, error: null });
@@ -40,6 +59,11 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
       <header className="page-header">
         <h2>Ayarlar</h2>
       </header>
+      {health && (
+        <p className="muted small">
+          Ahirena çekirdek v{health.core.version} · veri {health.data_dir}
+        </p>
+      )}
 
       <label>
         Varsayılan model
@@ -81,6 +105,108 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
         {state.error && <span className="error-inline">{state.error}</span>}
       </div>
 
+      <h3>Ağ politikası</h3>
+      <p className="muted small">
+        OS duvarı değildir. Tor SOCKS {torListening ? "açık" : "yok"}. Görevler ekranından da değiştirilebilir.
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={offline} onChange={(e) => setOffline(e.target.checked)} /> Ağ politikası kapalı
+      </label>
+      <label>
+        Tor SOCKS
+        <input value={torSocks} onChange={(e) => setTorSocks(e.target.value)} />
+      </label>
+      <div className="row">
+        <button
+          onClick={async () => {
+            setState({ saving: true, message: null, error: null });
+            try {
+              const n = await api<{ offline: boolean; tor_socks: string; tor_listening: boolean }>("PUT", "/api/network", {
+                offline,
+                tor_socks: torSocks,
+              });
+              setOffline(n.offline);
+              setTorSocks(n.tor_socks);
+              setTorListening(n.tor_listening);
+              setState({ saving: false, message: "Ağ ayarı kaydedildi.", error: null });
+            } catch (e) {
+              setState({ saving: false, message: null, error: errorText(e) });
+            }
+          }}
+        >
+          Ağ ayarını kaydet
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              const r = await api<{ note: string; tor_listening: boolean }>("POST", "/api/network/tor-probe");
+              setTorListening(r.tor_listening);
+              setState({ saving: false, message: r.note, error: null });
+            } catch (e) {
+              setState({ saving: false, message: null, error: errorText(e) });
+            }
+          }}
+        >
+          Tor SOCKS denetle
+        </button>
+      </div>
+
+      <h3>Yedek ve dışa aktarım</h3>
+      <p className="muted small">Sırlar ve model ağırlıkları pakete girmez. Yedek uygulama kapalıyken geri kopyalanır.</p>
+      <div className="row">
+        <button
+          onClick={async () => {
+            setState({ saving: true, message: null, error: null });
+            try {
+              const r = await api<{ path: string }>("POST", "/api/backup");
+              setLastPath(r.path);
+              setState({ saving: false, message: `Yedek: ${r.path}`, error: null });
+            } catch (e) {
+              setState({ saving: false, message: null, error: errorText(e) });
+            }
+          }}
+        >
+          SQLite yedeği al
+        </button>
+        <button
+          onClick={async () => {
+            setState({ saving: true, message: null, error: null });
+            try {
+              const r = await api<{ path: string }>("POST", "/api/export");
+              setLastPath(r.path);
+              setState({ saving: false, message: `Dışa aktarım: ${r.path}`, error: null });
+            } catch (e) {
+              setState({ saving: false, message: null, error: errorText(e) });
+            }
+          }}
+        >
+          Kişisel veriyi dışa aktar
+        </button>
+        {lastPath && (
+          <button
+            onClick={() =>
+              revealPath(lastPath).catch((e) => setState((s) => ({ ...s, error: errorText(e) })))
+            }
+          >
+            Son dosyayı klasörde aç
+          </button>
+        )}
+      </div>
+
+      {media && (
+        <>
+          <h3>Medya durumu</h3>
+          <ul className="facts">
+            {Object.entries(media).map(([k, v]) => (
+              <li key={k}>
+                {k}: {v.status ?? (v.available ? "açık" : "kapalı")}
+                {v.note ? ` — ${v.note}` : ""}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
       <h3>Gizlilik ve konum</h3>
       {health ? (
         <ul className="facts">
@@ -93,10 +219,34 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
               : "bilinmiyor — sunucu Ahirena dışında başlatılmış"}
           </li>
           <li>Konuşmaların saklandığı yer: yerel SQLite — {health.data_dir}</li>
+          {health.disk && (
+            <li>
+              Veri diski boş alan: {health.disk.free_mib} MiB {health.disk.ok ? "" : "(yedek/aktarım reddedilir)"}
+            </li>
+          )}
           <li className="muted small">Bunlar uygulama ayarlarıdır; işletim sistemi düzeyinde ağ engeli değildir.</li>
         </ul>
       ) : (
         <p className="muted">Durum bilgisi alınamadı.</p>
+      )}
+      {health && (
+        <div className="row">
+          <button type="button" onClick={() => revealPath(health.data_dir).catch((e) => setState((s) => ({ ...s, error: errorText(e) })))}>
+            Veri klasörünü aç
+          </button>
+          <button
+            type="button"
+            onClick={() => revealPath(`${health.data_dir}\\logs`).catch((e) => setState((s) => ({ ...s, error: errorText(e) })))}
+          >
+            Günlük klasörünü aç
+          </button>
+          <button
+            type="button"
+            onClick={() => revealPath(health.config_path).catch((e) => setState((s) => ({ ...s, error: errorText(e) })))}
+          >
+            config.json konumunu aç
+          </button>
+        </div>
       )}
 
       {health?.ollama_runtime && (
@@ -112,6 +262,44 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
             <li className="muted small">Bu ayarlar {health.config_path} dosyasındadır; değişiklik uygulama yeniden açılınca geçerli olur.</li>
           </ul>
         </>
+      )}
+
+      <h3>Dürüst durum özeti</h3>
+      <p className="muted small">Sahte yeşil ışık yok; planlanan özellik planlandı görünür.</p>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            setDiag(await api("GET", "/api/diagnostics"));
+            setState((s) => ({ ...s, error: null }));
+          } catch (e) {
+            setState((s) => ({ ...s, error: errorText(e) }));
+          }
+        }}
+      >
+        Özeti yenile
+      </button>
+      {diag && (
+        <ul className="facts">
+          <li>Yerel öncelik: {String(diag.local_first)} · uzak sağlayıcı: {String(diag.remote_providers)}</li>
+          <li>
+            Medya — OCR: {String((diag.media as { ocr?: string })?.ocr)} · ses çıkış:{" "}
+            {String((diag.media as { speech_output?: string })?.speech_output)} · ekran izleme:{" "}
+            {String((diag.media as { screen_watch?: string })?.screen_watch)}
+          </li>
+          <li>
+            Eğitim: {String((diag.training as { status?: string })?.status)} · çalıştırıcı{" "}
+            {String((diag.training as { runner?: string })?.runner)}
+          </li>
+          <li>
+            Ağ OS duvarı: {String((diag.network as { os_firewall?: boolean })?.os_firewall)} · Tor dinliyor:{" "}
+            {String((diag.network as { tor_listening?: boolean })?.tor_listening)}
+          </li>
+          <li>
+            Betik: {String(diag.scripts)} · tarayıcı oturumu: {String(diag.browser_sessions)} · açılış hizmeti:{" "}
+            {String((diag.tasks as { os_autostart?: boolean })?.os_autostart)}
+          </li>
+        </ul>
       )}
     </section>
   );

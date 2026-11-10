@@ -7,9 +7,24 @@ import ModelsView from "./components/ModelsView";
 import CompareView from "./components/CompareView";
 import SettingsView from "./components/SettingsView";
 import SkillsView from "./components/SkillsView";
+import MemoryView from "./components/MemoryView";
+import DocumentsView from "./components/DocumentsView";
+import TasksView from "./components/TasksView";
+import TrainingView from "./components/TrainingView";
+import OutputsView from "./components/OutputsView";
 import StatusBar from "./components/StatusBar";
 
-export type View = "chat" | "models" | "compare" | "skills" | "settings";
+export type View =
+  | "chat"
+  | "models"
+  | "compare"
+  | "skills"
+  | "memory"
+  | "documents"
+  | "tasks"
+  | "outputs"
+  | "training"
+  | "settings";
 
 export default function App() {
   const [core, setCore] = useState<CoreStatus>({ state: "starting", error: null, log_hint: null });
@@ -144,11 +159,20 @@ export default function App() {
             }}
             onUpdated={() => setListVersion((v) => v + 1)}
             onRunning={setRunning}
+            onSelect={(id) => {
+              setActiveId(id);
+              setView("chat");
+            }}
           />
         )}
         {view === "models" && <ModelsView models={models} loaded={loaded} errors={modelErrors} onRefresh={refreshModels} />}
         {view === "compare" && settings && <CompareView models={models} settings={settings} onRunning={setRunning} />}
         {view === "skills" && <SkillsView />}
+        {view === "memory" && <MemoryView />}
+        {view === "documents" && <DocumentsView />}
+        {view === "tasks" && <TasksView />}
+        {view === "outputs" && <OutputsView />}
+        {view === "training" && <TrainingView />}
         {view === "settings" && settings && <SettingsView settings={settings} models={models} health={health} onSaved={setSettings} />}
       </main>
       <StatusBar health={health} error={healthError} loaded={loaded} running={running} />
