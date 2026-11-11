@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, cancelRun, copyText, errorText, pickFile, revealPath, stream } from "../api";
 import { metricsLine, shortDigest } from "../format";
-import type { AppSettings, Conversation, Message, MessageSource, ModelInfo, StreamEvent } from "../types";
+import type { AppSettings, Conversation, Message, MessageAttachment, MessageSource, ModelInfo, StreamEvent } from "../types";
 import Markdown from "./Markdown";
 import ModelPicker from "./ModelPicker";
 
@@ -381,6 +381,41 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
               ) : null
             ) : (
               <p className="user-text">{m.content}</p>
+            )}
+            {(m.attachments?.length ?? 0) > 0 && (
+              <details className="sources" open>
+                <summary>Ekler ({m.attachments!.length})</summary>
+                <ul>
+                  {m.attachments!.map((a: MessageAttachment) => (
+                    <li key={a.id}>
+                      <strong>{a.untrusted ? "Güvenilmeyen ek" : "Ek"}</strong> · {a.media_type} · {a.byte_size} bayt
+                      {!a.exists ? " · dosya yok" : ""}
+                      <div className="row">
+                        <span className="muted small">{a.path}</span>
+                        <button
+                          type="button"
+                          className="linkish"
+                          disabled={!a.exists}
+                          onClick={() => revealPath(a.path).catch((e) => setError(errorText(e)))}
+                        >
+                          Klasörde aç
+                        </button>
+                        <button
+                          type="button"
+                          className="linkish"
+                          onClick={() =>
+                            copyText(a.path)
+                              .then(() => setFeedbackOk("Ek yolu panoya kopyalandı."))
+                              .catch((e) => setError(errorText(e)))
+                          }
+                        >
+                          Yolu kopyala
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
             {m.status === "cancelled" && <div className="badge">Durduruldu{m.content ? " — yanıt yarım" : ""}</div>}
             {m.status === "error" && <div className="error-inline">{m.error ?? "Hata"}</div>}

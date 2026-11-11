@@ -47,6 +47,7 @@ export default function DocumentsView() {
   const [hits, setHits] = useState<Hit[] | null>(null);
   const [indexNote, setIndexNote] = useState("fts-1 · vektör yok");
   const [jobs, setJobs] = useState<IndexJob[]>([]);
+  const [spaceName, setSpaceName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async (ws: string) => {
@@ -73,16 +74,38 @@ export default function DocumentsView() {
         Düz metin ve Markdown indekslenir. PDF, ofis ve görüntü bu sürümde ayrıştırılmaz. Vektör indeksi yok; arama sözcük indeksidir.
         Silmek kaydı ve indeksi kaldırır, diskteki dosyaya dokunmaz.
       </p>
-      <label>
-        Çalışma alanı
-        <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
-          {spaces.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="row">
+        <label>
+          Çalışma alanı
+          <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
+            {spaces.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Yeni alan
+          <input value={spaceName} onChange={(e) => setSpaceName(e.target.value)} />
+        </label>
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              const created = await api<Workspace>("POST", "/api/workspaces", { name: spaceName });
+              setSpaces(await api<Workspace[]>("GET", "/api/workspaces"));
+              setWorkspaceId(created.id);
+              setSpaceName("");
+              setError(null);
+            } catch (e) {
+              setError(errorText(e));
+            }
+          }}
+        >
+          Alan aç
+        </button>
+      </div>
       <label>
         Dosya yolu
         <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\notlar\toplanti.txt" />

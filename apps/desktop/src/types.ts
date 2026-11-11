@@ -19,6 +19,16 @@ export interface MessageSource {
   text: string;
 }
 
+export interface MessageAttachment {
+  id: string;
+  path: string;
+  media_type: string;
+  byte_size: number;
+  content_hash: string;
+  untrusted: boolean;
+  exists: boolean;
+}
+
 export interface Metrics {
   ttft_ms?: number;
   wall_ms?: number;
@@ -49,6 +59,7 @@ export interface Message {
   model_digest: string | null;
   metrics: Metrics | null;
   sources?: MessageSource[];
+  attachments?: MessageAttachment[];
   created_at: string;
   updated_at: string;
 }

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from .db import Database, utcnow
-from .schemas import AppSettings, Conversation, Message
+from .schemas import AppSettings, Conversation, Message, MessageAttachment
 from .textnorm import search_key
 
 DEFAULT_TITLE = "Yeni oturum"
@@ -29,7 +31,20 @@ def _conversation(row: Any, snippet: str | None = None) -> Conversation:
     )
 
 
-def _message(row: Any) -> Message:
+def _attachment(row: Any) -> MessageAttachment:
+    path = row["path"]
+    return MessageAttachment(
+        id=row["id"],
+        path=path,
+        media_type=row["media_type"],
+        byte_size=int(row["byte_size"] or 0),
+        content_hash=row["content_hash"],
+        untrusted=bool(row["untrusted"]),
+        exists=Path(path).is_file(),
+    )
+
+
+def _message(row: Any, attachments: list[MessageAttachment] | None = None) -> Message:
     return Message(
         id=row["id"],
         conversation_id=row["conversation_id"],
@@ -43,6 +58,7 @@ def _message(row: Any) -> Message:
         model_digest=row["model_digest"],
         metrics=json.loads(row["metrics_json"]) if row["metrics_json"] else None,
         sources=json.loads(row["sources_json"]) if "sources_json" in row.keys() and row["sources_json"] else [],
+        attachments=attachments or [],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -171,11 +187,26 @@ class Store:
         rows = self.db.query(
             "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid", (conversation_id,)
         )
-        return [_message(r) for r in rows]
+        att_rows = self.db.query(
+            "SELECT * FROM attachments WHERE conversation_id = ? ORDER BY created_at, rowid",
+            (conversation_id,),
+        )
+        by_msg: dict[str, list[MessageAttachment]] = defaultdict(list)
+        for a in att_rows:
+            mid = a["message_id"]
+            if mid:
+                by_msg[mid].append(_attachment(a))
+        return [_message(r, by_msg.get(r["id"])) for r in rows]
 
     def get_message(self, message_id: str) -> Message | None:
         row = self.db.query_one("SELECT * FROM messages WHERE id = ?", (message_id,))
-        return _message(row) if row else None
+        if row is None:
+            return None
+        att_rows = self.db.query(
+            "SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, rowid",
+            (message_id,),
+        )
+        return _message(row, [_attachment(a) for a in att_rows])
 
     def add_message(
         self,

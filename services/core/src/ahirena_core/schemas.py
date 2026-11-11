@@ -41,6 +41,16 @@ class MessageSource(BaseModel):
     text: str = ""
 
 
+class MessageAttachment(BaseModel):
+    id: str
+    path: str
+    media_type: str
+    byte_size: int
+    content_hash: str
+    untrusted: bool = True
+    exists: bool = True
+
+
 class Message(BaseModel):
     id: str
     conversation_id: str
@@ -54,6 +64,7 @@ class Message(BaseModel):
     model_digest: str | None
     metrics: dict[str, Any] | None
     sources: list[MessageSource] = Field(default_factory=list)
+    attachments: list[MessageAttachment] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
