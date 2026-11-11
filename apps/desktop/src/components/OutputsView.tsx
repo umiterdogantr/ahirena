@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, revealPath } from "../api";
+import { api, copyText, errorText, revealPath } from "../api";
 
 interface Artifact {
   id: string;
@@ -16,13 +16,16 @@ interface Artifact {
 
 export default function OutputsView() {
   const [items, setItems] = useState<Artifact[]>([]);
+  const [kind, setKind] = useState("");
   const [previewText, setPreviewText] = useState<string | null>(null);
   const [versions, setVersions] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    setItems(await api<Artifact[]>("GET", "/api/artifacts"));
-  }, []);
+    const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+    setItems(await api<Artifact[]>("GET", `/api/artifacts${q}`));
+  }, [kind]);
 
   useEffect(() => {
     reload().catch((e) => setError(errorText(e)));
@@ -34,10 +37,22 @@ export default function OutputsView() {
         <h2>Çıktılar</h2>
       </header>
       <p className="muted">
-        Yalnızca gerçekten üretilmiş dosyalar listelenir. Diskte olmayan kayıt için indirme üretilmez.
+        Yalnızca gerçekten üretilmiş dosyalar listelenir. Diskte olmayan kayıt için indirme üretilmez. Listeden
+        çıkarmak dosyayı silmez; dosya silme açıkça istenmelidir.
       </p>
-      <button onClick={() => reload().catch((e) => setError(errorText(e)))}>Yenile</button>
-      {items.length === 0 && <p className="muted">Henüz çıktı yok. Yedek, dışa aktarım veya onaylı dosya yazımı burada görünür.</p>}
+      <div className="row">
+        <button onClick={() => reload().catch((e) => setError(errorText(e)))}>Yenile</button>
+        <label>
+          Tür
+          <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <option value="">Tümü</option>
+            <option value="backup">Yedek</option>
+            <option value="export">Dışa aktarım</option>
+            <option value="file_write">Dosya yazımı</option>
+          </select>
+        </label>
+      </div>
+      {items.length === 0 && <p className="muted">Bu filtrede çıktı yok.</p>}
       {items.map((a) => (
         <article key={a.id} className="facts">
           <h3>
@@ -81,15 +96,65 @@ export default function OutputsView() {
             >
               Sürümler
             </button>
-            <button
-              disabled={!a.exists}
-              onClick={() => revealPath(a.path).catch((e) => setError(errorText(e)))}
-            >
+            <button disabled={!a.exists} onClick={() => revealPath(a.path).catch((e) => setError(errorText(e)))}>
               Klasörde aç
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await copyText(a.path);
+                  setNote("Yol panoya kopyalandı.");
+                  setError(null);
+                } catch (e) {
+                  setError(errorText(e));
+                }
+              }}
+            >
+              Yolu kopyala
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const r = await api<{ note: string }>("DELETE", `/api/artifacts/${a.id}`, { delete_file: false });
+                  setNote(r.note);
+                  setPreviewText(null);
+                  setVersions(null);
+                  setError(null);
+                  await reload();
+                } catch (e) {
+                  setError(errorText(e));
+                }
+              }}
+            >
+              Listeden çıkar
+            </button>
+            <button
+              type="button"
+              disabled={!a.exists}
+              title="Yalnızca uygulama veri klasöründeki dosya silinir"
+              onClick={async () => {
+                try {
+                  const r = await api<{ note: string; file_deleted: boolean }>("DELETE", `/api/artifacts/${a.id}`, {
+                    delete_file: true,
+                  });
+                  setNote(r.note);
+                  setPreviewText(null);
+                  setVersions(null);
+                  setError(null);
+                  await reload();
+                } catch (e) {
+                  setError(errorText(e));
+                }
+              }}
+            >
+              Dosyayı da sil
             </button>
           </div>
         </article>
       ))}
+      {note && <p className="muted">{note}</p>}
       {previewText && <pre className="facts">{previewText}</pre>}
       {versions && <pre className="facts">{versions}</pre>}
       {error && <p className="error-inline">{error}</p>}

@@ -20,6 +20,7 @@ import uvicorn
 
 from .app import create_app
 from .config import Settings
+from .export import apply_pending_restore
 
 
 def _setup_logging(settings: Settings) -> None:
@@ -92,6 +93,9 @@ def main() -> None:
     settings = Settings.from_env()
     _setup_logging(settings)
     logging.getLogger("ahirena").info("Çekirdek başlıyor; veri klasörü: %s", settings.data_dir)
+    restored = apply_pending_restore(settings.data_dir)
+    if restored:
+        logging.getLogger("ahirena").info("Geri yükleme: %s", restored)
     asyncio.run(_serve(settings))
 
 

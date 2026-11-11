@@ -126,7 +126,19 @@ export interface CoreStatus {
 }
 
 export type StreamEvent =
-  | { event: "run"; data: { run_id: string; model_id: string; user_message?: Message; assistant_message_id?: string; context_dropped_messages?: number; sources?: MessageSource[] } }
+  | {
+      event: "run";
+      data: {
+        run_id: string;
+        model_id: string;
+        user_message?: Message;
+        assistant_message_id?: string;
+        context_dropped_messages?: number;
+        sources?: MessageSource[];
+        num_ctx?: number;
+        boost?: { boost?: boolean; context_length?: number; base_context?: number; remote?: boolean };
+      };
+    }
   | { event: "thinking"; data: { delta: string } }
   | { event: "token"; data: { delta: string } }
   | { event: "done"; data: { run_id: string; status: MessageStatus; error: string | null; metrics: Metrics } }

@@ -61,3 +61,12 @@ export function pickFile(title?: string, extensions?: string[]): Promise<string 
 export function pickFolder(title?: string): Promise<string | null> {
   return invoke("pick_folder", { title: title ?? null });
 }
+
+/** Metni panoya kopyalar. */
+export async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  throw new Error("Pano kullanılamıyor.");
+}

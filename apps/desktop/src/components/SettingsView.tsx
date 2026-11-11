@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, errorText, revealPath } from "../api";
+import { api, errorText, pickFile, pickFolder, revealPath } from "../api";
 import type { AppSettings, Health, ModelInfo, Theme } from "../types";
 import ModelPicker from "./ModelPicker";
 
@@ -28,6 +28,12 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
   const [torSocks, setTorSocks] = useState("127.0.0.1:9050");
   const [torListening, setTorListening] = useState(false);
   const [diag, setDiag] = useState<Record<string, unknown> | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<{ source_db?: string; note?: string; error?: string } | null>(null);
+
+  const reloadPending = () =>
+    api<{ pending: { source_db?: string; note?: string; error?: string } | null }>("GET", "/api/backup/pending")
+      .then((r) => setPendingRestore(r.pending))
+      .catch(() => undefined);
 
   useEffect(() => {
     api<Record<string, { available?: boolean; status?: string; note?: string }>>("GET", "/api/media")
@@ -40,6 +46,7 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
         setTorListening(n.tor_listening);
       })
       .catch(() => undefined);
+    reloadPending();
   }, []);
 
   const save = async () => {
@@ -152,7 +159,10 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
       </div>
 
       <h3>Yedek ve dışa aktarım</h3>
-      <p className="muted small">Sırlar ve model ağırlıkları pakete girmez. Yedek uygulama kapalıyken geri kopyalanır.</p>
+      <p className="muted small">
+        Sırlar ve model ağırlıkları pakete girmez. Geri yükleme canlı DB açıkken uygulanmaz; sonraki açılışta mevcut
+        veritabanı önce backups/pre-restore-* altına kopyalanır.
+      </p>
       <div className="row">
         <button
           onClick={async () => {
@@ -182,6 +192,32 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
         >
           Kişisel veriyi dışa aktar
         </button>
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              const folder = await pickFolder("Yedek klasörü seçin");
+              const file = folder ? null : await pickFile("ahirena.db seçin", ["db"]);
+              const path = folder || file;
+              if (!path) return;
+              setState({ saving: true, message: null, error: null });
+              const r = await api<{ note: string; source_db: string }>("POST", "/api/backup/restore", {
+                path,
+                confirm: true,
+              });
+              setState({
+                saving: false,
+                message: `${r.note} Kaynak: ${r.source_db}. Uygulamayı kapatıp yeniden açın.`,
+                error: null,
+              });
+              await reloadPending();
+            } catch (e) {
+              setState({ saving: false, message: null, error: errorText(e) });
+            }
+          }}
+        >
+          Yedekten geri yükle…
+        </button>
         {lastPath && (
           <button
             onClick={() =>
@@ -192,6 +228,28 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
           </button>
         )}
       </div>
+      {pendingRestore && (
+        <div className="row">
+          <p className="muted small">
+            Bekleyen geri yükleme: {pendingRestore.source_db ?? pendingRestore.error ?? "—"}
+            {pendingRestore.note ? ` — ${pendingRestore.note}` : ""}
+          </p>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const r = await api<{ note: string }>("DELETE", "/api/backup/pending");
+                setState({ saving: false, message: r.note, error: null });
+                await reloadPending();
+              } catch (e) {
+                setState({ saving: false, message: null, error: errorText(e) });
+              }
+            }}
+          >
+            Bekleyen geri yüklemeyi iptal et
+          </button>
+        </div>
+      )}
 
       {media && (
         <>
@@ -266,19 +324,36 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
 
       <h3>Dürüst durum özeti</h3>
       <p className="muted small">Sahte yeşil ışık yok; planlanan özellik planlandı görünür.</p>
-      <button
-        type="button"
-        onClick={async () => {
-          try {
-            setDiag(await api("GET", "/api/diagnostics"));
-            setState((s) => ({ ...s, error: null }));
-          } catch (e) {
-            setState((s) => ({ ...s, error: errorText(e) }));
-          }
-        }}
-      >
-        Özeti yenile
-      </button>
+      <div className="row">
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              setDiag(await api("GET", "/api/diagnostics"));
+              setState((s) => ({ ...s, error: null }));
+            } catch (e) {
+              setState((s) => ({ ...s, error: errorText(e) }));
+            }
+          }}
+        >
+          Özeti yenile
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              const r = await api<{ path: string; diagnostics: Record<string, unknown> }>("POST", "/api/diagnostics/save");
+              setDiag(r.diagnostics);
+              setLastPath(r.path);
+              setState({ saving: false, message: `Tanılama kaydedildi: ${r.path}`, error: null });
+            } catch (e) {
+              setState((s) => ({ ...s, error: errorText(e) }));
+            }
+          }}
+        >
+          Özeti dosyaya kaydet
+        </button>
+      </div>
       {diag && (
         <ul className="facts">
           <li>Yerel öncelik: {String(diag.local_first)} · uzak sağlayıcı: {String(diag.remote_providers)}</li>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, cancelRun, errorText, pickFile, revealPath, stream } from "../api";
+import { api, cancelRun, copyText, errorText, pickFile, revealPath, stream } from "../api";
 import { metricsLine, shortDigest } from "../format";
 import type { AppSettings, Conversation, Message, MessageSource, ModelInfo, StreamEvent } from "../types";
 import Markdown from "./Markdown";
@@ -46,6 +46,15 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
   const [messages, setMessages] = useState<Message[]>([]);
   const [model, setModel] = useState<string | null>(null);
   const [think, setThink] = useState(false);
+  const [boost, setBoost] = useState(false);
+  const [boostInfo, setBoostInfo] = useState<{
+    label: string;
+    effect: string;
+    note: string;
+    remote: boolean;
+    example_effective_context?: number;
+    base_context?: number;
+  } | null>(null);
   const [input, setInput] = useState("");
   const [imagePath, setImagePath] = useState("");
   const [feedbackFor, setFeedbackFor] = useState<string | null>(null);
@@ -65,10 +74,21 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
 
   const caps = models.find((m) => m.model_id === model)?.capabilities ?? [];
   const canThink = caps.includes("thinking");
+  const modelCtx = models.find((m) => m.model_id === model)?.context_length ?? null;
 
   useEffect(() => {
     api<{ id: string; name: string }[]>("GET", "/api/workspaces")
       .then(setWorkspaces)
+      .catch(() => undefined);
+    api<{
+      label: string;
+      effect: string;
+      note: string;
+      remote: boolean;
+      example_effective_context?: number;
+      base_context?: number;
+    }>("GET", "/api/boost")
+      .then(setBoostInfo)
       .catch(() => undefined);
   }, []);
 
@@ -164,8 +184,16 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
               };
             return copy;
           });
-          if (e.data.context_dropped_messages)
-            setNotice(`Bağlam sınırı (${settings.context_length} token) nedeniyle en eski ${e.data.context_dropped_messages} mesaj modele gönderilmedi.`);
+          if (e.data.context_dropped_messages) {
+            const ctx = e.data.num_ctx ?? settings.context_length;
+            setNotice(
+              `Bağlam sınırı (${ctx} token${e.data.boost?.boost ? ", Boost" : ""}) nedeniyle en eski ${e.data.context_dropped_messages} mesaj modele gönderilmedi.`,
+            );
+          } else if (e.data.boost?.boost) {
+            setNotice(
+              `Boost: bağlam ${e.data.num_ctx ?? e.data.boost.context_length} token · yerel · uzak servis yok.`,
+            );
+          }
           break;
         case "thinking":
           patchAssistant((m) => ({ ...m, thinking: (m.thinking ?? "") + e.data.delta }));
@@ -190,6 +218,7 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
           model_id: model,
           provider_id: "ollama",
           think: canThink && think,
+          boost,
           image_path: imagePath.trim() || null,
         },
         onEvent,
@@ -249,6 +278,21 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
             <input type="checkbox" checked={think} onChange={(e) => setThink(e.target.checked)} disabled={!!run} /> Düşünme
           </label>
         )}
+        <label
+          className="check"
+          title={
+            boostInfo
+              ? `${boostInfo.effect} ${boostInfo.note} Uzak: ${boostInfo.remote ? "evet" : "hayır"}.`
+              : "Daha geniş bağlam profili; donanım sınırını kaldırmaz."
+          }
+        >
+          <input type="checkbox" checked={boost} onChange={(e) => setBoost(e.target.checked)} disabled={!!run} /> Boost
+        </label>
+        {boost && boostInfo && (
+          <span className="muted small" title={boostInfo.note}>
+            ~{Math.min(settings.context_length * 2, 16384, modelCtx || 16384)} token · yerel · uzak yok
+          </span>
+        )}
         {conversationId && (
           <button
             disabled={!!run}
@@ -264,6 +308,26 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
             }}
           >
             Dal aç
+          </button>
+        )}
+        {conversationId && (
+          <button
+            disabled={!!run}
+            title="Oturumu JSON olarak dışa aktarır; Çıktılar listesine ekler"
+            onClick={async () => {
+              try {
+                const r = await api<{ path: string; message_count: number }>(
+                  "POST",
+                  `/api/conversations/${conversationId}/export`,
+                );
+                setError(null);
+                setFeedbackOk(`Oturum dışa aktarıldı (${r.message_count} mesaj): ${r.path}`);
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Dışa aktar
           </button>
         )}
       </header>
@@ -344,19 +408,32 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
                 </ul>
               </details>
             )}
-            {m.role === "assistant" && m.status !== "streaming" && !m.id.startsWith("tmp-") && (
+            {m.status !== "streaming" && !!m.content && (
               <div className="row">
                 <button
                   type="button"
-                  onClick={() => {
-                    setFeedbackFor(m.id);
-                    setFeedbackNote("");
-                    setFeedbackFix("");
-                    setFeedbackOk(null);
-                  }}
+                  className="linkish"
+                  onClick={() =>
+                    copyText(m.content)
+                      .then(() => setFeedbackOk("Mesaj panoya kopyalandı."))
+                      .catch((e) => setError(errorText(e)))
+                  }
                 >
-                  Düzeltme kaydet
+                  Kopyala
                 </button>
+                {m.role === "assistant" && !m.id.startsWith("tmp-") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFeedbackFor(m.id);
+                      setFeedbackNote("");
+                      setFeedbackFix("");
+                      setFeedbackOk(null);
+                    }}
+                  >
+                    Düzeltme kaydet
+                  </button>
+                )}
               </div>
             )}
             {m.role === "assistant" && m.status !== "streaming" && (

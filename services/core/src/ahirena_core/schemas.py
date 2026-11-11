@@ -62,6 +62,7 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
     model_id: str = Field(min_length=1, max_length=200)
     think: bool = False
+    boost: bool = False
     image_path: str | None = Field(default=None, max_length=500)
 
 

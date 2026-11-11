@@ -52,11 +52,6 @@ def register_file(
     return get(db, aid)
 
 
-def list_artifacts(db: Database) -> list[dict]:
-    rows = db.query("SELECT * FROM artifacts ORDER BY created_at DESC")
-    return [_row(r) for r in rows]
-
-
 def get(db: Database, artifact_id: str) -> dict:
     row = db.query_one("SELECT * FROM artifacts WHERE id = ?", (artifact_id,))
     if row is None:
@@ -86,6 +81,49 @@ def diff(db: Database, artifact_id: str) -> dict:
         "versions": [dict(r) for r in rows],
         "note": "İçerik farkı yalnızca özet düzeyindedir; satır satır diff üretilmez.",
     }
+
+
+def forget(
+    db: Database,
+    artifact_id: str,
+    *,
+    delete_file: bool = False,
+    data_dir: Path | None = None,
+) -> dict:
+    """Kayıtı listeden çıkarır. Dosya varsayılan olarak diskte kalır."""
+    art = get(db, artifact_id)
+    path = Path(art["path"]).resolve()
+    file_deleted = False
+    if delete_file:
+        if data_dir is None:
+            raise ArtifactError("Dosya silmek için veri klasörü gerekir.")
+        root = data_dir.resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as e:
+            raise ArtifactError("Yalnızca uygulama veri klasöründeki dosya silinebilir.") from e
+    with db.transaction() as c:
+        c.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
+    if delete_file and path.is_file():
+        try:
+            path.unlink()
+            file_deleted = True
+        except OSError as e:
+            raise ArtifactError(f"Kayıt silindi ama dosya kaldırılamadı: {e}") from e
+    return {
+        "removed": artifact_id,
+        "path": art["path"],
+        "file_deleted": file_deleted,
+        "note": "Dosya diskte bırakıldı." if not file_deleted else "Dosya da silindi.",
+    }
+
+
+def list_artifacts(db: Database, *, kind: str | None = None) -> list[dict]:
+    if kind:
+        rows = db.query("SELECT * FROM artifacts WHERE kind = ? ORDER BY created_at DESC", (kind,))
+    else:
+        rows = db.query("SELECT * FROM artifacts ORDER BY created_at DESC")
+    return [_row(r) for r in rows]
 
 
 def _row(row, *, exists: bool | None = None) -> dict:

@@ -8,6 +8,7 @@ Sırlar, model ağırlıkları ve Ollama tokenı pakete girmez.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import sqlite3
 from pathlib import Path
@@ -15,6 +16,10 @@ from pathlib import Path
 from .artifacts import register_file
 from .db import Database, utcnow
 from .storage import require_space
+
+log = logging.getLogger("ahirena.export")
+
+PENDING_RESTORE = "pending_restore.json"
 
 
 class ExportError(ValueError):
@@ -78,6 +83,112 @@ def export_personal(db: Database, data_dir: Path) -> dict:
     }
 
 
+def export_conversation(db: Database, data_dir: Path, conversation_id: str) -> dict:
+    """Tek oturumu JSON olarak dışa aktarır (sırlar yok)."""
+    require_space(data_dir)
+    row = db.query_one("SELECT * FROM conversations WHERE id = ?", (conversation_id,))
+    if row is None:
+        raise ExportError("Oturum yok.")
+    messages = [dict(r) for r in db.query(
+        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid",
+        (conversation_id,),
+    )]
+    stamp = utcnow().replace(":", "").replace("+", "z")[:20]
+    safe_title = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in (row["title"] or "oturum"))[:40].strip() or "oturum"
+    out = data_dir / "exports" / f"ahirena-conversation-{safe_title}-{stamp}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        raise ExportError("Dışa aktarım dosyası zaten var.")
+    payload = {
+        "exported_at": utcnow(),
+        "format": "ahirena-conversation",
+        "version": 1,
+        "conversation": dict(row),
+        "messages": messages,
+        "excludes": ["secrets", "model_weights", "ollama_token"],
+    }
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    artifact = register_file(
+        db,
+        out,
+        kind="export",
+        title=f"Oturum: {row['title']}",
+        media_type="application/json",
+    )
+    return {
+        "path": str(out),
+        "bytes": out.stat().st_size,
+        "artifact_id": artifact["id"],
+        "conversation_id": conversation_id,
+        "message_count": len(messages),
+    }
+
+
+def save_comparison(
+    db: Database,
+    data_dir: Path,
+    *,
+    prompt: str,
+    results: list[dict],
+    context_length: int | None = None,
+    system_prompt_note: str | None = None,
+) -> dict:
+    """Model karşılaştırma sonucunu JSON olarak kaydeder (yalnızca gönderilen çıktı)."""
+    require_space(data_dir)
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise ExportError("Karşılaştırma sorusu boş.")
+    if not results:
+        raise ExportError("Kaydedilecek sonuç yok.")
+    cleaned: list[dict] = []
+    for r in results:
+        if not isinstance(r, dict):
+            raise ExportError("Sonuç biçimi geçersiz.")
+        model_id = str(r.get("model_id") or "").strip()
+        if not model_id:
+            raise ExportError("Sonuçta model_id gerekir.")
+        cleaned.append(
+            {
+                "model_id": model_id[:200],
+                "content": str(r.get("content") or "")[:200_000],
+                "status": str(r.get("status") or "")[:40],
+                "error": (str(r["error"])[:2000] if r.get("error") else None),
+                "metrics": r.get("metrics") if isinstance(r.get("metrics"), dict) else None,
+            }
+        )
+    stamp = utcnow().replace(":", "").replace("+", "z")[:20]
+    out = data_dir / "exports" / f"ahirena-compare-{stamp}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        raise ExportError("Karşılaştırma dosyası zaten var.")
+    payload = {
+        "exported_at": utcnow(),
+        "format": "ahirena-compare",
+        "version": 1,
+        "prompt": prompt[:50_000],
+        "context_length": context_length,
+        "system_prompt_note": system_prompt_note
+        or "Sistem talimatı ayarlardan geldi; bu dosyada tekrarlanmaz.",
+        "results": cleaned,
+        "excludes": ["secrets", "model_weights", "ollama_token", "full_system_prompt"],
+        "note": "Sonuçlar sırayla üretildi; modeller aynı anda belleğe yüklenmedi.",
+    }
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    artifact = register_file(
+        db,
+        out,
+        kind="export",
+        title=f"Karşılaştırma {stamp}",
+        media_type="application/json",
+    )
+    return {
+        "path": str(out),
+        "bytes": out.stat().st_size,
+        "artifact_id": artifact["id"],
+        "result_count": len(cleaned),
+    }
+
+
 def consistent_backup(db: Database, data_dir: Path) -> dict:
     """SQLite tutarlı kopyası. Arama indeksleri yeniden kurulabilir."""
     require_space(data_dir)
@@ -99,7 +210,7 @@ def consistent_backup(db: Database, data_dir: Path) -> dict:
         shutil.copy2(cfg, out / "config.json")
     (out / "README.txt").write_text(
         "Ahirena yedek.\n"
-        "Geri yükleme: uygulama kapalıyken ahirena.db dosyasını veri klasörüne kopyalayın.\n"
+        "Geri yükleme: Ayarlar > Yedekten geri yükle, veya uygulama kapalıyken ahirena.db dosyasını data klasörüne kopyalayın.\n"
         "Sırlar düz metin dışa aktarılmaz; config içinde parola alanı yoktur.\n"
         f"Oluşturulma: {utcnow()}\n",
         encoding="utf-8",
@@ -110,4 +221,102 @@ def consistent_backup(db: Database, data_dir: Path) -> dict:
         "bytes": sum(p.stat().st_size for p in out.rglob("*") if p.is_file()),
         "files": [p.name for p in out.iterdir()],
         "artifact_id": artifact["id"],
+    }
+
+
+def resolve_backup_source(path: str | Path) -> Path:
+    """Yedek klasörü veya ahirena.db dosyasını doğrular."""
+    p = Path(path).expanduser().resolve()
+    if p.is_dir():
+        cand = p / "ahirena.db"
+        if not cand.is_file():
+            raise ExportError("Klasörde ahirena.db yok.")
+        p = cand.resolve()
+    if not p.is_file():
+        raise ExportError("Yedek veritabanı dosyası yok.")
+    try:
+        con = sqlite3.connect(f"file:{p.as_posix()}?mode=ro", uri=True)
+    except sqlite3.Error as e:
+        raise ExportError(f"SQLite açılamadı: {e}") from e
+    try:
+        tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        con.close()
+    if "conversations" not in tables or "schema_migrations" not in tables:
+        raise ExportError("Dosya Ahirena yedeği gibi görünmüyor.")
+    return p
+
+
+def schedule_restore(data_dir: Path, source: str | Path, *, confirm: bool) -> dict:
+    """Canlı DB kilitliyken yalnızca sonraki açılışa planlar."""
+    if not confirm:
+        raise ExportError("Geri yükleme için confirm=true gerekir.")
+    src = resolve_backup_source(source)
+    live = (data_dir / "data" / "ahirena.db").resolve()
+    if src == live:
+        raise ExportError("Canlı veritabanı kendisine geri yüklenemez.")
+    payload = {
+        "source_db": str(src),
+        "scheduled_at": utcnow(),
+        "note": "Bir sonraki açılışta uygulanır. Mevcut DB önce backups/pre-restore-* altına kopyalanır.",
+    }
+    pending = data_dir / PENDING_RESTORE
+    pending.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {**payload, "pending_path": str(pending), "restart_required": True}
+
+
+def pending_restore(data_dir: Path) -> dict | None:
+    path = data_dir / PENDING_RESTORE
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as e:
+        return {"error": f"pending_restore.json okunamadı: {e}", "path": str(path)}
+    return {**raw, "pending_path": str(path), "restart_required": True}
+
+
+def cancel_pending_restore(data_dir: Path) -> dict:
+    path = data_dir / PENDING_RESTORE
+    if path.is_file():
+        path.unlink()
+        return {"cancelled": True, "note": "Bekleyen geri yükleme iptal edildi."}
+    return {"cancelled": False, "note": "Bekleyen geri yükleme yok."}
+
+
+def apply_pending_restore(data_dir: Path) -> dict | None:
+    """Veritabanı açılmadan önce çağrılır. Bekleyen yoksa None."""
+    path = data_dir / PENDING_RESTORE
+    if not path.is_file():
+        return None
+    stamp = utcnow().replace(":", "").replace("+", "z")[:20]
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+        src = resolve_backup_source(raw["source_db"])
+    except (OSError, json.JSONDecodeError, KeyError, ExportError, TypeError) as e:
+        failed = data_dir / f"pending_restore.failed-{stamp}.json"
+        try:
+            path.replace(failed)
+        except OSError:
+            path.unlink(missing_ok=True)
+        log.error("Bekleyen geri yükleme uygulanamadı: %s", e)
+        return {"ok": False, "error": str(e), "failed_path": str(failed) if failed.exists() else None}
+
+    live = data_dir / "data" / "ahirena.db"
+    live.parent.mkdir(parents=True, exist_ok=True)
+    safety = data_dir / "backups" / f"pre-restore-{stamp}"
+    safety.mkdir(parents=True)
+    if live.is_file():
+        shutil.copy2(live, safety / "ahirena.db")
+    cfg = data_dir / "config.json"
+    if cfg.is_file():
+        shutil.copy2(cfg, safety / "config.json")
+    shutil.copy2(src, live)
+    path.unlink(missing_ok=True)
+    log.info("Yedek geri yüklendi: %s -> %s (önceki: %s)", src, live, safety)
+    return {
+        "ok": True,
+        "restored_from": str(src),
+        "previous_saved_to": str(safety),
+        "note": "Geri yükleme uygulandı. Arama indeksleri yeniden kurulabilir.",
     }

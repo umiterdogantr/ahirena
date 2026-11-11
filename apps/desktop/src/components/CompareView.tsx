@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { cancelRun, errorText, stream } from "../api";
+import { api, cancelRun, copyText, errorText, revealPath, stream } from "../api";
 import { metricsLine } from "../format";
 import type { AppSettings, Metrics, MessageStatus, ModelInfo } from "../types";
 import Markdown from "./Markdown";
@@ -18,13 +18,16 @@ interface Column {
   metrics: Metrics | null;
 }
 
-/** Aynı soruyu seçilen modellere sırayla sorar. Sonuçlar kaydedilmez. */
+/** Aynı soruyu seçilen modellere sırayla sorar. İstenirse Çıktılar’a kaydedilir. */
 export default function CompareView({ models, settings, onRunning }: Props) {
   const [prompt, setPrompt] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [columns, setColumns] = useState<Column[]>([]);
   const [running, setRunning] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [savedPath, setSavedPath] = useState<string | null>(null);
   const runId = useRef<string | null>(null);
   const stopAll = useRef(false);
 
@@ -34,11 +37,16 @@ export default function CompareView({ models, settings, onRunning }: Props) {
 
   const patch = (i: number, fn: (c: Column) => Column) => setColumns((cs) => cs.map((c, j) => (j === i ? fn(c) : c)));
 
+  const doneEnough = columns.length > 0 && !running && columns.some((c) => c.content || c.error || c.status === "cancelled");
+
   const start = async () => {
     if (!prompt.trim() || selected.length === 0) return;
     stopAll.current = false;
     setStopping(false);
     setRunning(true);
+    setNote(null);
+    setError(null);
+    setSavedPath(null);
     const order = models.map((m) => m.model_id).filter((id) => selected.includes(id));
     setColumns(order.map((model_id) => ({ model_id, content: "", status: "waiting", error: null, metrics: null })));
     for (let i = 0; i < order.length; i++) {
@@ -74,7 +82,8 @@ export default function CompareView({ models, settings, onRunning }: Props) {
         <h2>Model karşılaştırma</h2>
       </header>
       <p className="muted small">
-        Aynı soru seçilen modellere sırayla sorulur; modeller aynı anda belleğe yüklenmez. Sonuçlar kaydedilmez. Sistem talimatı ve bağlam sınırı ({settings.context_length}) ayarlardan gelir.
+        Aynı soru seçilen modellere sırayla sorulur; modeller aynı anda belleğe yüklenmez. Sistem talimatı ve bağlam sınırı (
+        {settings.context_length}) ayarlardan gelir. Bittiğinde sonucu Çıktılar listesine kaydedebilirsiniz.
       </p>
       <div className="model-checks">
         {models.map((m) => (
@@ -94,7 +103,40 @@ export default function CompareView({ models, settings, onRunning }: Props) {
             Karşılaştır
           </button>
         )}
+        {doneEnough && (
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const r = await api<{ path: string; result_count: number }>("POST", "/api/compare/save", {
+                  prompt,
+                  results: columns.map((c) => ({
+                    model_id: c.model_id,
+                    content: c.content,
+                    status: c.status,
+                    error: c.error,
+                    metrics: c.metrics,
+                  })),
+                });
+                setSavedPath(r.path);
+                setNote(`${r.result_count} sonuç kaydedildi.`);
+                setError(null);
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Sonucu kaydet
+          </button>
+        )}
+        {savedPath && (
+          <button type="button" onClick={() => revealPath(savedPath).catch((e) => setError(errorText(e)))}>
+            Dosyayı klasörde aç
+          </button>
+        )}
       </div>
+      {note && <p className="muted">{note}</p>}
+      {error && <p className="error-inline">{error}</p>}
       <div className="columns">
         {columns.map((c) => (
           <div key={c.model_id} className="column">
@@ -105,6 +147,15 @@ export default function CompareView({ models, settings, onRunning }: Props) {
             {c.status === "cancelled" && <div className="badge">Durduruldu</div>}
             {c.error && <div className="error-inline">{c.error}</div>}
             {c.metrics && <footer className="msg-meta">{metricsLine(c.metrics)}</footer>}
+            {c.content && (
+              <button
+                type="button"
+                className="linkish"
+                onClick={() => copyText(c.content).then(() => setNote(`${c.model_id} yanıtı panoya kopyalandı.`)).catch((e) => setError(errorText(e)))}
+              >
+                Yanıtı kopyala
+              </button>
+            )}
           </div>
         ))}
       </div>
