@@ -172,7 +172,8 @@ export default function MemoryView() {
         <article key={item.id} className="facts">
           <p>{item.body}</p>
           <p className="muted small">
-            Kaynak: {item.source_ref} · {item.status === "active" ? "geçerli" : "geçersiz"} · doğrulanmış
+            Kaynak: {item.source_ref} · {item.status === "active" ? "geçerli" : "geçersiz"} ·{" "}
+            {item.verified ? "doğrulanmış" : "doğrulanmamış"}
           </p>
           <div className="row">
             {looksLikePath(item.source_ref) && (

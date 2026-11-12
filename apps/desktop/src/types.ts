@@ -13,11 +13,14 @@ export interface Conversation {
 }
 
 export interface MessageSource {
-  kind: "memory" | "document";
+  kind: "memory" | "document" | "skill" | "model" | "index";
   id: string;
   title: string;
   path?: string | null;
   text: string;
+  version?: number | null;
+  start_char?: number | null;
+  end_char?: number | null;
 }
 
 export interface MessageAttachment {

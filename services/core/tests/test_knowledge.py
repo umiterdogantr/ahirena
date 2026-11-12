@@ -146,8 +146,27 @@ def test_chat_uses_only_workspace_sources(live, tmp_path: Path):
         run = next(d for e, d in events if e == "run")
         kinds = {s["kind"] for s in run["sources"]}
         assert "memory" in kinds and "document" in kinds
-        assert c.get(f"/api/conversations/{cid}/messages").json()[1]["sources"]
+        assert "model" in kinds and "index" in kinds
+        assert any(s["kind"] == "model" and s["id"] == "fake-model" for s in run["sources"])
+        saved = c.get(f"/api/conversations/{cid}/messages").json()[1]["sources"]
+        assert saved
+        assert {s["kind"] for s in saved} >= {"model", "index", "memory", "document"}
+        docs = [s for s in saved if s["kind"] == "document"]
+        assert docs and docs[0].get("version") == 1
+        assert docs[0].get("start_char") is not None
+        loc = c.get(
+            f"/api/documents/{doc['id']}/source",
+            params={"version": docs[0]["version"], "start_char": docs[0]["start_char"], "end_char": docs[0]["end_char"]},
+        )
+        assert loc.status_code == 200, loc.text
+        assert loc.json()["ok"] is True
+        assert loc.json()["version_match"] is True
+        assert "İstanbul" in loc.json()["excerpt"]
         assert c.delete(f"/api/documents/{doc['id']}").status_code == 200
+        gone = c.get(f"/api/documents/{doc['id']}/source", params={"version": 1, "start_char": 0})
+        assert gone.status_code == 200
+        assert gone.json()["ok"] is False
+        assert gone.json()["deleted"] is True
         cid2 = c.post("/api/conversations", json={"workspace_id": "genel"}).json()["id"]
         with c.stream(
             "POST",
@@ -158,6 +177,39 @@ def test_chat_uses_only_workspace_sources(live, tmp_path: Path):
             r.read()
         system2 = next(m.content for m in live.provider.last_messages if m.role == "system")
         assert "İstanbul deposu" not in system2
+
+
+def test_chat_evidence_lists_enabled_skill(live, tmp_path: Path):
+    from conftest import parse_sse
+
+    skill_dir = tmp_path / "saat"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: saat\ndescription: Kanıt testi saati.\n---\n\nSaat.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "capabilities.json").write_text(
+        '{"format":"ahirena-capabilities","version":1,"tools":["clock.now"],"network":"none"}',
+        encoding="utf-8",
+    )
+    with live.client() as c:
+        assert c.post("/api/skills/import", json={"path": str(skill_dir)}).status_code == 200
+        assert (
+            c.post("/api/skills/saat/enable", json={"grants": [{"permission": "clock.now", "scope": {}}]}).status_code
+            == 200
+        )
+        cid = c.post("/api/conversations", json={"workspace_id": "genel"}).json()["id"]
+        with c.stream(
+            "POST",
+            f"/api/conversations/{cid}/chat",
+            json={"content": "merhaba", "model_id": "fake-model", "provider_id": "fake"},
+        ) as r:
+            assert r.status_code == 200
+            events = parse_sse(list(r.iter_lines()))
+        run = next(d for e, d in events if e == "run")
+        skills = [s for s in run["sources"] if s["kind"] == "skill"]
+        assert any(s["id"] == "saat" for s in skills)
+        assert "araç çağrılmadı" in skills[0]["text"]
 
 
 def test_chat_does_not_become_memory(live):

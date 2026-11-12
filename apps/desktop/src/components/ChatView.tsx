@@ -69,10 +69,26 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
   const [workspaceId, setWorkspaceId] = useState("genel");
   const [parentId, setParentId] = useState<string | null>(null);
   const [newSpace, setNewSpace] = useState("");
+  const [templates, setTemplates] = useState<
+    { id: string; name: string; body: string; version: number; params: string[] }[]
+  >([]);
+  const [templateId, setTemplateId] = useState("");
+  const [templateParams, setTemplateParams] = useState<Record<string, string>>({});
+  const [templateName, setTemplateName] = useState("");
+  const [templateVersions, setTemplateVersions] = useState<
+    { version: number; name: string; body: string; active: boolean; archived_at: string | null }[] | null
+  >(null);
   const skipReload = useRef<string | null>(null);
   const pendingCancel = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+
+  const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
+
+  const reloadTemplates = () =>
+    api<{ id: string; name: string; body: string; version: number; params: string[] }[]>("GET", "/api/templates")
+      .then(setTemplates)
+      .catch(() => undefined);
 
   const caps = models.find((m) => m.model_id === model)?.capabilities ?? [];
   const canThink = caps.includes("thinking");
@@ -92,6 +108,7 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
     }>("GET", "/api/boost")
       .then(setBoostInfo)
       .catch(() => undefined);
+    reloadTemplates();
   }, []);
 
   useEffect(() => {
@@ -334,10 +351,16 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
         {conversationId && (
           <button
             disabled={!!run}
-            title="Bu oturumdan yeni dal açar; önceki mesajları kopyalar"
+            title={
+              model
+                ? `Yeni dal açar; seçili model: ${model}. Geçmiş mesajlar kopyalanır, canlı araç tekrarı yok.`
+                : "Bu oturumdan yeni dal açar; önceki mesajları kopyalar"
+            }
             onClick={async () => {
               try {
-                const c = await api<Conversation>("POST", `/api/conversations/${conversationId}/branch`, {});
+                const body: { model_id?: string } = {};
+                if (model) body.model_id = model;
+                const c = await api<Conversation>("POST", `/api/conversations/${conversationId}/branch`, body);
                 onSelect?.(c.id);
                 onUpdated();
               } catch (e) {
@@ -345,7 +368,7 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
               }
             }}
           >
-            Dal aç
+            {model ? `Dal aç (${model})` : "Dal aç"}
           </button>
         )}
         {conversationId && (
@@ -459,11 +482,32 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
             {m.status === "error" && <div className="error-inline">{m.error ?? "Hata"}</div>}
             {m.role === "assistant" && (m.sources?.length ?? 0) > 0 && (
               <details className="sources">
-                <summary>Kaynaklar ({m.sources!.length})</summary>
+                <summary>Kanıt özeti ({m.sources!.length})</summary>
+                <p className="muted small">Doğrulanabilir kayıtlar; modelin kendi doğruluk yüzdesi üretilmez.</p>
                 <ul>
                   {m.sources!.map((s: MessageSource, i) => (
                     <li key={`${s.kind}-${s.id}-${i}`}>
-                      <strong>{s.kind === "document" ? "Belge" : "Hafıza"}</strong> · {s.title}
+                      <strong>
+                        {s.kind === "document"
+                          ? "Belge"
+                          : s.kind === "memory"
+                            ? "Hafıza"
+                            : s.kind === "skill"
+                              ? "Yetenek"
+                              : s.kind === "model"
+                                ? "Model"
+                                : "İndeks"}
+                      </strong>{" "}
+                      · {s.title}
+                      {s.kind === "document" && (s.version != null || s.start_char != null) && (
+                        <div className="muted small">
+                          {s.version != null ? `sürüm ${s.version}` : ""}
+                          {s.start_char != null && s.end_char != null
+                            ? `${s.version != null ? " · " : ""}karakter ${s.start_char}–${s.end_char}`
+                            : ""}
+                        </div>
+                      )}
+                      {s.text ? <div className="muted small">{s.text}</div> : null}
                       {s.path ? (
                         <div className="row">
                           <span className="muted small">{s.path}</span>
@@ -474,6 +518,36 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
                           >
                             Klasörde aç
                           </button>
+                          {s.kind === "document" && (
+                            <button
+                              type="button"
+                              className="linkish"
+                              onClick={async () => {
+                                try {
+                                  const q = new URLSearchParams();
+                                  if (s.version != null) q.set("version", String(s.version));
+                                  if (s.start_char != null) q.set("start_char", String(s.start_char));
+                                  if (s.end_char != null) q.set("end_char", String(s.end_char));
+                                  const loc = await api<{
+                                    ok: boolean;
+                                    path: string;
+                                    exists: boolean;
+                                    note: string;
+                                    excerpt: string;
+                                    requested_version: number;
+                                    current_version: number;
+                                  }>("GET", `/api/documents/${s.id}/source?${q}`);
+                                  setFeedbackOk(loc.note + (loc.excerpt ? ` — ${loc.excerpt.slice(0, 120)}` : ""));
+                                  if (loc.exists) await revealPath(loc.path);
+                                  setError(loc.ok ? null : loc.note);
+                                } catch (e) {
+                                  setError(errorText(e));
+                                }
+                              }}
+                            >
+                              Konumu doğrula
+                            </button>
+                          )}
                         </div>
                       ) : null}
                     </li>
@@ -494,6 +568,33 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
                 >
                   Kopyala
                 </button>
+                {conversationId && !m.id.startsWith("tmp-") && (
+                  <button
+                    type="button"
+                    className="linkish"
+                    disabled={!!run}
+                    title="Bu mesaja kadar kopyalar; seçili modelle yeni dal açar"
+                    onClick={async () => {
+                      try {
+                        const body: { up_to_message_id: string; model_id?: string } = {
+                          up_to_message_id: m.id,
+                        };
+                        if (model) body.model_id = model;
+                        const c = await api<Conversation>(
+                          "POST",
+                          `/api/conversations/${conversationId}/branch`,
+                          body,
+                        );
+                        onSelect?.(c.id);
+                        onUpdated();
+                      } catch (e) {
+                        setError(errorText(e));
+                      }
+                    }}
+                  >
+                    Buradan dal
+                  </button>
+                )}
                 {m.role === "assistant" && !m.id.startsWith("tmp-") && (
                   <button
                     type="button"
@@ -573,6 +674,174 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
       {feedbackOk && <div className="notice">{feedbackOk}</div>}
       {notice && <div className="notice">{notice}</div>}
       {error && <div className="error-inline">{error}</div>}
+
+      <div className="facts">
+        <h3>Şablon</h3>
+        <p className="muted small">
+          Parametreler {"{{ad}}"} biçimindedir. Şablon yalnızca metni doldurur; model çağrısı buradan başlamaz.
+        </p>
+        <div className="row">
+          <label>
+            Kayıtlı
+            <select
+              value={templateId}
+              onChange={(e) => {
+                const id = e.target.value;
+                setTemplateId(id);
+                const t = templates.find((x) => x.id === id);
+                const next: Record<string, string> = {};
+                for (const p of t?.params ?? []) next[p] = templateParams[p] ?? "";
+                setTemplateParams(next);
+              }}
+            >
+              <option value="">Seçin…</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} · v{t.version}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={!selectedTemplate}
+            onClick={async () => {
+              try {
+                const r = await api<{ text: string }>("POST", `/api/templates/${selectedTemplate!.id}/render`, {
+                  params: templateParams,
+                });
+                setInput(r.text);
+                setError(null);
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Yazı alanına doldur
+          </button>
+          <button
+            type="button"
+            disabled={!input.trim()}
+            onClick={async () => {
+              try {
+                const name = templateName.trim() || input.trim().slice(0, 40) || "Şablon";
+                if (selectedTemplate) {
+                  const updated = await api<{ id: string; version: number }>("PATCH", `/api/templates/${selectedTemplate.id}`, {
+                    name: templateName.trim() || selectedTemplate.name,
+                    body: input,
+                  });
+                  await reloadTemplates();
+                  setTemplateId(updated.id);
+                  setTemplateVersions(null);
+                  setFeedbackOk(`Şablon güncellendi (v${updated.version}).`);
+                } else {
+                  const created = await api<{ id: string }>("POST", "/api/templates", { name, body: input });
+                  setTemplateName("");
+                  await reloadTemplates();
+                  setTemplateId(created.id);
+                  setFeedbackOk("Şablon kaydedildi.");
+                }
+                setError(null);
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            {selectedTemplate ? "Şablonu güncelle" : "Metni şablon yap"}
+          </button>
+          <button
+            type="button"
+            disabled={!selectedTemplate}
+            onClick={async () => {
+              try {
+                const r = await api<{ versions: { version: number; name: string; body: string; active: boolean; archived_at: string | null }[] }>(
+                  "GET",
+                  `/api/templates/${selectedTemplate!.id}/versions`,
+                );
+                setTemplateVersions(r.versions);
+                setError(null);
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Sürümler
+          </button>
+          <button
+            type="button"
+            disabled={!selectedTemplate}
+            onClick={async () => {
+              try {
+                await api("DELETE", `/api/templates/${selectedTemplate!.id}`);
+                setTemplateId("");
+                setTemplateParams({});
+                setTemplateVersions(null);
+                await reloadTemplates();
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Şablonu sil
+          </button>
+        </div>
+        <label>
+          Yeni şablon adı
+          <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="Örn. Haftalık özet" />
+        </label>
+        {selectedTemplate?.params.map((p) => (
+          <label key={p}>
+            {p}
+            <input
+              value={templateParams[p] ?? ""}
+              onChange={(e) => setTemplateParams({ ...templateParams, [p]: e.target.value })}
+            />
+          </label>
+        ))}
+        {templateVersions && templateVersions.length > 0 && (
+          <div>
+            <p className="muted small">Önceki sürüme dönüş yeni sürüm olarak kaydedilir.</p>
+            {templateVersions.map((v) => (
+              <div key={v.version} className="row">
+                <span className="muted small">
+                  v{v.version} · {v.active ? "aktif" : "arşiv"} · {v.name}
+                </span>
+                {!v.active && selectedTemplate && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const out = await api<{ version: number; body: string; params: string[] }>(
+                          "POST",
+                          `/api/templates/${selectedTemplate.id}/restore`,
+                          { version: v.version },
+                        );
+                        await reloadTemplates();
+                        setTemplateId(selectedTemplate.id);
+                        setInput(out.body);
+                        const next: Record<string, string> = {};
+                        for (const p of out.params ?? []) next[p] = "";
+                        setTemplateParams(next);
+                        const r = await api<{ versions: typeof templateVersions }>(
+                          "GET",
+                          `/api/templates/${selectedTemplate.id}/versions`,
+                        );
+                        setTemplateVersions(r.versions);
+                        setFeedbackOk(`Şablon v${v.version} geri yüklendi → v${out.version}.`);
+                        setError(null);
+                      } catch (e) {
+                        setError(errorText(e));
+                      }
+                    }}
+                  >
+                    Bu sürüme dön
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="composer">
         <textarea

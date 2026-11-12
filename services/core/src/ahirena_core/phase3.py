@@ -18,6 +18,7 @@ from .knowledge import (
     list_index_jobs,
     list_memory,
     list_workspaces,
+    locate_document_source,
     retry_failed_jobs,
     search_documents,
     search_memory,
@@ -114,6 +115,23 @@ def register_phase3(app: FastAPI, settings: Settings) -> None:
     @app.delete("/api/documents/{document_id}")
     async def remove_document(document_id: str) -> dict:
         return guard(lambda: delete_document(db(), document_id))
+
+    @app.get("/api/documents/{document_id}/source")
+    async def document_source(
+        document_id: str,
+        version: int | None = Query(default=None),
+        start_char: int | None = Query(default=None),
+        end_char: int | None = Query(default=None),
+    ) -> dict:
+        return guard(
+            lambda: locate_document_source(
+                db(),
+                document_id,
+                version=version,
+                start_char=start_char,
+                end_char=end_char,
+            )
+        )
 
     @app.get("/api/documents/search")
     async def find_documents(workspace_id: str = Query(min_length=1), q: str = Query(min_length=1)) -> dict:

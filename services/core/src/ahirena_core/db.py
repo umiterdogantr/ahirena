@@ -334,6 +334,34 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX ix_skill_versions_skill ON skill_versions(skill_id, archived_at);
         """,
     ),
+    (
+        11,
+        """
+        ALTER TABLE skills ADD COLUMN last_test_json TEXT;
+        """,
+    ),
+    (
+        12,
+        """
+        CREATE TABLE prompt_templates (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            body        TEXT NOT NULL,
+            version     INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX ix_prompt_templates_updated ON prompt_templates(updated_at);
+        CREATE TABLE prompt_template_versions (
+            template_id  TEXT NOT NULL,
+            version      INTEGER NOT NULL,
+            name         TEXT NOT NULL,
+            body         TEXT NOT NULL,
+            archived_at  TEXT NOT NULL,
+            PRIMARY KEY (template_id, version)
+        );
+        """,
+    ),
 ]
 
 

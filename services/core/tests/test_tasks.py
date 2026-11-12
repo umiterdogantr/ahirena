@@ -135,6 +135,26 @@ def test_missed_one_shot_is_skipped(tmp_path: Path):
     db.close()
 
 
+def test_http_list_includes_approvals(live, tmp_path: Path):
+    root = tmp_path / "yaz"
+    root.mkdir()
+    with live.client() as c:
+        created = c.post(
+            "/api/tasks",
+            json={
+                "kind": "files.write",
+                "params": {"relative": "a.txt", "content": "x"},
+                "grant": {"roots": [str(root)]},
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["state"] == "waiting_approval"
+        listed = c.get("/api/tasks").json()
+        item = next(t for t in listed if t["id"] == created.json()["id"])
+        assert item.get("approvals")
+        assert any(a["decision"] == "pending" for a in item["approvals"])
+
+
 def test_http_clock_and_blocked_fetch(live):
     with live.client() as c:
         created = c.post("/api/tasks", json={"kind": "clock.now", "title": "saat"})
@@ -175,8 +195,19 @@ def test_http_clock_and_blocked_fetch(live):
         assert "kapalı" in (failed["last_error"] or "").lower()
         c.put("/api/network", json={"offline": False, "tor_socks": "127.0.0.1:9050"})
         assert c.get("/api/tasks", params={"state": "succeeded"}).json()
-        active = c.post("/api/tasks", json={"kind": "clock.now", "title": "aktif"}).json()
+        # İşçi tamamlamasın diye geleceğe zamanla; yalnızca terminal durum silinir.
+        active = c.post(
+            "/api/tasks",
+            json={
+                "kind": "clock.now",
+                "title": "aktif",
+                "schedule_at": "2099-01-01T00:00:00+00:00",
+            },
+        ).json()
+        assert active.get("schedule_at")
+        assert c.get(f"/api/tasks/{active['id']}").json()["state"] == "queued"
         assert c.delete(f"/api/tasks/{active['id']}").status_code == 400
+
         assert c.delete(f"/api/tasks/{created.json()['id']}").json()["removed"] == created.json()["id"]
         purged = c.post("/api/tasks/purge-terminal")
         assert purged.status_code == 200

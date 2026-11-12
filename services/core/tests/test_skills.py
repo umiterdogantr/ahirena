@@ -152,7 +152,33 @@ def test_mcp_grant_revoked_when_tools_change(live, tmp_path, monkeypatch):
     assert client.get("/api/mcp").json() == []
 
 
+def test_skill_validate_before_enable(live, tmp_path):
+    src = _skill(tmp_path / "saat", "saat", ["clock.now"])
+    client = live.client()
+    assert client.post("/api/skills/import", json={"path": str(src)}).status_code == 200
+    path_check = client.post("/api/skills/validate-path", json={"path": str(src)})
+    assert path_check.status_code == 200, path_check.text
+    assert path_check.json()["status"] == "passed"
+    assert path_check.json()["enables"] is False
+    validated = client.post("/api/skills/saat/validate")
+    assert validated.status_code == 200, validated.text
+    body = validated.json()
+    assert body["status"] == "passed"
+    assert body["enables"] is False
+    assert any(t["tool"] == "clock.now" and t["status"] == "passed" for t in body["tool_results"])
+    listed = client.get("/api/skills").json()
+    assert listed[0]["enabled"] is False
+    assert listed[0]["last_test"]["status"] == "passed"
+    partial_src = _skill(tmp_path / "oku", "oku", ["files.read"])
+    assert client.post("/api/skills/import", json={"path": str(partial_src)}).status_code == 200
+    partial = client.post("/api/skills/oku/validate")
+    assert partial.status_code == 200
+    assert partial.json()["status"] == "partial"
+    assert partial.json()["enables"] is False
+
+
 def test_skill_version_rollback(live, tmp_path):
+
     src1 = _skill(tmp_path / "saat-v1", "saat", ["clock.now"], "Birinci paket.")
     src2 = _skill(tmp_path / "saat-v2", "saat", ["clock.now"], "İkinci paket sürümü.")
     client = live.client()

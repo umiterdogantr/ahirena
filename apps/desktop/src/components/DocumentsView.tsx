@@ -222,9 +222,34 @@ export default function DocumentsView() {
             <br />
             {h.path}
           </p>
-          <button type="button" onClick={() => revealPath(h.path).catch((e) => setError(errorText(e)))}>
-            Klasörde aç
-          </button>
+          <div className="row">
+            <button type="button" onClick={() => revealPath(h.path).catch((e) => setError(errorText(e)))}>
+              Klasörde aç
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const q = new URLSearchParams({
+                    version: String(h.version),
+                    start_char: String(h.start_char),
+                    end_char: String(h.end_char),
+                  });
+                  const loc = await api<{ ok: boolean; path: string; exists: boolean; note: string; excerpt: string }>(
+                    "GET",
+                    `/api/documents/${h.document_id}/source?${q}`,
+                  );
+                  setIndexNote(loc.note + (loc.excerpt ? ` — ${loc.excerpt.slice(0, 120)}` : ""));
+                  if (loc.exists) await revealPath(loc.path);
+                  setError(loc.ok ? null : loc.note);
+                } catch (e) {
+                  setError(errorText(e));
+                }
+              }}
+            >
+              Konumu doğrula
+            </button>
+          </div>
         </article>
       ))}
       {error && <p className="error-inline">{error}</p>}

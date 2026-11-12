@@ -1,6 +1,8 @@
-"""Aşama 5: medya durumu, görev dalı, çevrimdışı oynatma, yetenek taslağı."""
+"""Aşama 5: medya durumu, görev dalı, çevrimdışı oynatma, yetenek taslağı, şablonlar."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -9,6 +11,16 @@ from .config import Settings
 from .media import media_status
 from .skilldraft import SkillError, discard_candidate, draft_skill, list_candidates
 from .tasks import TaskError
+from .templates import (
+    TemplateError,
+    create_template,
+    delete_template,
+    list_templates,
+    list_versions,
+    render_template,
+    restore_version,
+    update_template,
+)
 
 
 class BranchBody(BaseModel):
@@ -23,6 +35,19 @@ class DraftBody(BaseModel):
     tools: list[str] | None = None
 
 
+class TemplateBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=1, max_length=20_000)
+
+
+class TemplateRenderBody(BaseModel):
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class TemplateRestoreBody(BaseModel):
+    version: int = Field(ge=1)
+
+
 def register_phase5(app: FastAPI, settings: Settings) -> None:
     def engine():
         return app.state.tasks
@@ -30,7 +55,7 @@ def register_phase5(app: FastAPI, settings: Settings) -> None:
     def guard(work):
         try:
             return work()
-        except (TaskError, SkillError) as e:
+        except (TaskError, SkillError, TemplateError) as e:
             raise HTTPException(400, str(e)) from e
 
     @app.get("/api/media")
@@ -62,3 +87,31 @@ def register_phase5(app: FastAPI, settings: Settings) -> None:
     @app.post("/api/skills/candidates/{candidate_id}/discard")
     async def discard(candidate_id: str) -> dict:
         return guard(lambda: discard_candidate(app.state.store.db, candidate_id))
+
+    @app.get("/api/templates")
+    async def get_templates() -> list[dict]:
+        return list_templates(app.state.store.db)
+
+    @app.post("/api/templates")
+    async def post_template(body: TemplateBody) -> dict:
+        return guard(lambda: create_template(app.state.store.db, body.name, body.body))
+
+    @app.patch("/api/templates/{template_id}")
+    async def patch_template(template_id: str, body: TemplateBody) -> dict:
+        return guard(lambda: update_template(app.state.store.db, template_id, body.name, body.body))
+
+    @app.delete("/api/templates/{template_id}")
+    async def remove_template(template_id: str) -> dict:
+        return guard(lambda: delete_template(app.state.store.db, template_id))
+
+    @app.get("/api/templates/{template_id}/versions")
+    async def template_versions(template_id: str) -> dict:
+        return guard(lambda: list_versions(app.state.store.db, template_id))
+
+    @app.post("/api/templates/{template_id}/restore")
+    async def template_restore(template_id: str, body: TemplateRestoreBody) -> dict:
+        return guard(lambda: restore_version(app.state.store.db, template_id, body.version))
+
+    @app.post("/api/templates/{template_id}/render")
+    async def template_render(template_id: str, body: TemplateRenderBody) -> dict:
+        return guard(lambda: render_template(app.state.store.db, template_id, body.params))

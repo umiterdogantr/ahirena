@@ -552,6 +552,9 @@ def retrieve_for_chat(db: Database, workspace_id: str, query: str) -> dict:
                     "title": hit["title"],
                     "path": hit["path"],
                     "text": hit["text"][:400],
+                    "version": hit["version"],
+                    "start_char": hit["start_char"],
+                    "end_char": hit["end_char"],
                 }
             )
             loc = f"{hit['path']} · sürüm {hit['version']} · karakter {hit['start_char']}-{hit['end_char']}"
@@ -565,4 +568,86 @@ def retrieve_for_chat(db: Database, workspace_id: str, query: str) -> dict:
             f"İndeks {INDEX_VERSION}; vektör indeksi {VECTOR_STATE}. "
             "Bu blokta olmayan bilgiyi belgelenmiş gerçek gibi yazma.\n\n" + "\n\n".join(blocks)
         )
-    return {**_index_meta(), "workspace_id": workspace_id, "sources": sources, "prompt": prompt}
+    meta = _index_meta()
+    sources.insert(
+        0,
+        {
+            "kind": "index",
+            "id": meta["index"],
+            "title": f"Arama indeksi {meta['index']}",
+            "path": None,
+            "text": f"vektör: {meta['vector']} · birleştirme: {meta['merge']}",
+        },
+    )
+    return {**meta, "workspace_id": workspace_id, "sources": sources, "prompt": prompt}
+
+
+def locate_document_source(
+    db: Database,
+    document_id: str,
+    *,
+    version: int | None = None,
+    start_char: int | None = None,
+    end_char: int | None = None,
+) -> dict:
+    """Kaynak bağlantısının belge sürümünü ve karakter aralığını doğrular."""
+    row = db.query_one("SELECT * FROM documents WHERE id = ?", (document_id,))
+    if row is None:
+        raise KnowledgeError("Belge kaydı yok.")
+    deleted = bool(row["deleted_at"])
+    current_version = int(row["version"])
+    requested = int(version) if version is not None else current_version
+    path = Path(row["path"])
+    exists = path.is_file()
+    version_match = requested == current_version and not deleted
+    excerpt = ""
+    chunk = db.query_one(
+        """
+        SELECT text, start_char, end_char, version FROM chunks
+        WHERE document_id = ? AND version = ?
+          AND (? IS NULL OR start_char = ?)
+        ORDER BY ordinal LIMIT 1
+        """,
+        (document_id, requested, start_char, start_char),
+    )
+    if chunk is None and start_char is not None:
+        chunk = db.query_one(
+            """
+            SELECT text, start_char, end_char, version FROM chunks
+            WHERE document_id = ? AND version = ?
+              AND start_char <= ? AND end_char >= ?
+            ORDER BY ordinal LIMIT 1
+            """,
+            (document_id, requested, start_char, start_char),
+        )
+    if chunk:
+        excerpt = chunk["text"][:500]
+        if start_char is None:
+            start_char = chunk["start_char"]
+        if end_char is None:
+            end_char = chunk["end_char"]
+    notes: list[str] = []
+    if deleted:
+        notes.append("Belge silinmiş; cevap bağlamına yeni istekte dönmez.")
+    elif not version_match:
+        notes.append(f"İstenen sürüm {requested}; güncel sürüm {current_version}.")
+    if not exists:
+        notes.append("Dosya diskte yok.")
+    if not excerpt and version_match:
+        notes.append("Bu konumda parça bulunamadı.")
+    ok = exists and version_match and not deleted
+    return {
+        "document_id": document_id,
+        "title": row["title"],
+        "path": row["path"],
+        "exists": exists,
+        "deleted": deleted,
+        "requested_version": requested,
+        "current_version": current_version,
+        "version_match": version_match,
+        "start_char": start_char,
+        "end_char": end_char,
+        "excerpt": excerpt,
+        "ok": ok,
+        "note": " ".join(notes) if notes else "Belge sürümü ve konum doğrulandı.",
+    }

@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, pickFile, pickFolder } from "../api";
+import { api, errorText, pickFile, pickFolder, revealPath } from "../api";
 
 interface Grant {
   permission: string;
   scope: { roots?: string[]; mode?: string };
+}
+
+interface SkillTest {
+  status: string;
+  note?: string;
+  tested_at?: string;
 }
 
 interface Skill {
@@ -12,9 +18,11 @@ interface Skill {
   description: string;
   enabled: boolean;
   content_hash: string;
+  package_dir?: string | null;
   tools: string[];
   grants: Grant[];
   scripts: string;
+  last_test?: SkillTest | null;
 }
 
 interface SkillVersion {
@@ -136,6 +144,13 @@ export default function SkillsView() {
         >
           Klasör seç…
         </button>
+        <button
+          type="button"
+          disabled={!path.trim()}
+          onClick={() => run("Doğrulama", () => api("POST", "/api/skills/validate-path", { path }))}
+        >
+          Klasörü doğrula
+        </button>
         <button className="primary" onClick={() => run("İçe aktarıldı", () => api("POST", "/api/skills/import", { path }))}>
           İçe aktar
         </button>
@@ -168,6 +183,12 @@ export default function SkillsView() {
           </p>
           <div className="row">
             <button
+              type="button"
+              onClick={() => run("Doğrulama", () => api("POST", "/api/skills/validate-path", { path: c.package_dir }))}
+            >
+              Doğrula
+            </button>
+            <button
               className="primary"
               onClick={() => run("İçe aktarıldı", () => api("POST", "/api/skills/import", { path: c.package_dir }))}
             >
@@ -188,6 +209,14 @@ export default function SkillsView() {
           <p className="muted small">
             Sürüm {skill.version ?? "?"} · araçlar: {skill.tools.join(", ")} · betikler: {skill.scripts} · özet{" "}
             {skill.content_hash.slice(0, 12)}
+            {skill.last_test && (
+              <>
+                <br />
+                Son doğrulama: {skill.last_test.status}
+                {skill.last_test.tested_at ? ` · ${skill.last_test.tested_at}` : ""}
+                {skill.last_test.note ? ` — ${skill.last_test.note}` : ""}
+              </>
+            )}
           </p>
           {skill.tools.includes("files.read") && (
             <label>
@@ -211,6 +240,20 @@ export default function SkillsView() {
             </label>
           )}
           <div className="row">
+            <button
+              type="button"
+              onClick={() => run("Doğrulama", () => api("POST", `/api/skills/${skill.id}/validate`))}
+            >
+              Paketi doğrula
+            </button>
+            {skill.package_dir && (
+              <button
+                type="button"
+                onClick={() => revealPath(skill.package_dir!).catch((e) => setError(errorText(e)))}
+              >
+                Paketi klasörde aç
+              </button>
+            )}
             <button className="primary" onClick={() => enable(skill)}>
               İzin ver ve aç
             </button>

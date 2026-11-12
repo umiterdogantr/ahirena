@@ -124,7 +124,8 @@ class SkillRegistry:
                 except ValueError:
                     next_ver = f"{existing['version']}+1"
                 c.execute(
-                    """UPDATE skills SET version=?, description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?, created_at=?
+                    """UPDATE skills SET version=?, description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?,
+                              last_test_json=NULL, created_at=?
                        WHERE id=?""",
                     (next_ver, description, str(dest), digest, json.dumps(tools), now, name),
                 )
@@ -252,7 +253,8 @@ class SkillRegistry:
                 raise SkillError("Yetenek bulunamadı.")
             self._archive_row(c, current, now)
             c.execute(
-                """UPDATE skills SET version=?, description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?, created_at=?
+                """UPDATE skills SET version=?, description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?,
+                          last_test_json=NULL, created_at=?
                    WHERE id=?""",
                 (version, description, str(package_dir), digest, json.dumps(tools), now, skill_id),
             )
@@ -260,6 +262,101 @@ class SkillRegistry:
         out = self.get(skill_id)
         out["note"] = "Önceki sürüme dönüldü; izinler düşürüldü, yetenek kapalı."
         return out
+
+    def validate(self, skill_id: str) -> dict:
+        """Paket şemasını ve güvenli duman testlerini çalıştırır; etkinleştirmez."""
+        skill = self.get(skill_id)
+        package = Path(skill["package_dir"]) if skill.get("package_dir") else None
+        if package is None or not package.is_dir():
+            raise SkillError("Paket klasörü diskte yok.")
+        result = self._validate_package(package, expected_hash=skill["content_hash"], expected_tools=skill["tools"])
+        result["skill_id"] = skill_id
+        result["enables"] = False
+        with self.db.transaction() as c:
+            c.execute(
+                "UPDATE skills SET last_test_json = ? WHERE id = ?",
+                (json.dumps(result, ensure_ascii=False), skill_id),
+            )
+        return result
+
+    def validate_path(self, source: str) -> dict:
+        """İçe aktarılmamış klasörü doğrular; kurmaz ve etkinleştirmez."""
+        src = Path(source).expanduser().resolve()
+        if not (src / "SKILL.md").is_file() or not (src / "capabilities.json").is_file():
+            raise SkillError("Klasörde SKILL.md ve capabilities.json olmalı.")
+        result = self._validate_package(src, expected_hash=None, expected_tools=None)
+        result["path"] = str(src)
+        result["enables"] = False
+        return result
+
+    def _validate_package(
+        self,
+        package: Path,
+        *,
+        expected_hash: str | None,
+        expected_tools: list[str] | None,
+    ) -> dict:
+        meta = self._read_package(package)
+        checks: list[dict] = [
+            {"name": "schema", "ok": True, "detail": "SKILL.md ve capabilities.json okundu."},
+        ]
+        if expected_hash is not None:
+            match = meta["content_hash"] == expected_hash
+            checks.append(
+                {
+                    "name": "content_hash",
+                    "ok": match,
+                    "detail": "Özet eşleşiyor." if match else "Diskteki paket kayıt özetinden farklı.",
+                }
+            )
+        if expected_tools is not None:
+            same = list(meta["tools"]) == list(expected_tools)
+            checks.append(
+                {
+                    "name": "tools",
+                    "ok": same,
+                    "detail": "Araç listesi kayıtla aynı." if same else "Araç listesi değişmiş.",
+                }
+            )
+        tool_results: list[dict] = []
+        for tool in meta["tools"]:
+            if tool == "clock.now":
+                try:
+                    def _no_sql(_sql: str) -> dict:
+                        raise SkillError("SQL yok")
+
+                    out = self._run("clock.now", {}, {}, _no_sql)
+                    tool_results.append({"tool": tool, "status": "passed", "detail": str(out.get("utc", ""))[:40]})
+                except Exception as e:  # noqa: BLE001 — duman testi sonucu kaydedilir
+                    tool_results.append({"tool": tool, "status": "failed", "detail": str(e)})
+            elif tool == "files.read":
+                tool_results.append(
+                    {"tool": tool, "status": "skipped", "detail": "Canlı test için kök klasör ve izin gerekir."}
+                )
+            elif tool in ("sql.query", "sql.tables"):
+                tool_results.append(
+                    {"tool": tool, "status": "skipped", "detail": "Canlı test için SQL bağlantısı ve izin gerekir."}
+                )
+            else:
+                tool_results.append({"tool": tool, "status": "failed", "detail": "Denetlenmemiş araç."})
+        failed = any(not c["ok"] for c in checks) or any(t["status"] == "failed" for t in tool_results)
+        skipped = any(t["status"] == "skipped" for t in tool_results)
+        status = "failed" if failed else ("partial" if skipped else "passed")
+        notes = {
+            "passed": "Şema ve güvenli duman testleri geçti. Etkinleştirme ayrı adımdır.",
+            "partial": "Paket geçerli; bazı araçlar izin sonrası canlı test ister. Etkinleştirilmedi.",
+            "failed": "Doğrulama başarısız. Bu sürüm otomatik açılmaz.",
+        }
+        return {
+            "status": status,
+            "content_hash": meta["content_hash"],
+            "description": meta["description"],
+            "tools": meta["tools"],
+            "checks": checks,
+            "tool_results": tool_results,
+            "tested_at": utcnow(),
+            "note": notes[status],
+        }
 
     def uninstall(self, skill_id: str) -> dict:
         skill = self.get(skill_id)
@@ -404,6 +501,12 @@ class SkillRegistry:
 
     def _row(self, row) -> dict:
         grants = self.db.query("SELECT permission, scope_json FROM skill_grants WHERE skill_id = ?", (row["id"],))
+        last_test = None
+        if "last_test_json" in row.keys() and row["last_test_json"]:
+            try:
+                last_test = json.loads(row["last_test_json"])
+            except ValueError:
+                last_test = None
         return {
             "id": row["id"],
             "version": row["version"],
@@ -415,7 +518,9 @@ class SkillRegistry:
             "tools": json.loads(row["tools_json"]),
             "grants": [{"permission": g["permission"], "scope": json.loads(g["scope_json"])} for g in grants],
             "scripts": "kapalı",
+            "last_test": last_test,
         }
+
 
 
 def log_mcp_call(db: Database, mcp_id: str, tool: str, ok: bool, error: str | None) -> None:

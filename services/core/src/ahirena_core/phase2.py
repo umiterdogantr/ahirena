@@ -70,6 +70,13 @@ def register_phase2(app: FastAPI, settings: Settings) -> None:
         except SkillError as e:
             raise HTTPException(400, str(e)) from e
 
+    @app.post("/api/skills/validate-path")
+    async def skill_validate_path(body: ImportBody) -> dict:
+        try:
+            return skills().validate_path(body.path)
+        except SkillError as e:
+            raise HTTPException(400, str(e)) from e
+
     @app.post("/api/skills/{skill_id}/enable")
     async def enable_skill(skill_id: str, body: EnableBody) -> dict:
         try:
@@ -109,6 +116,13 @@ def register_phase2(app: FastAPI, settings: Settings) -> None:
     async def skill_rollback(skill_id: str, body: RollbackBody) -> dict:
         try:
             return skills().rollback(skill_id, body.content_hash)
+        except SkillError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/skills/{skill_id}/validate")
+    async def skill_validate(skill_id: str) -> dict:
+        try:
+            return skills().validate(skill_id)
         except SkillError as e:
             raise HTTPException(400, str(e)) from e
 

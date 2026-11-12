@@ -2,7 +2,8 @@
 
 Sırlar, model ağırlıkları ve Ollama tokenı pakete girmez.
 İndeks dosyaları yeniden kurulabilir; dışa aktarımda konuşma, hafıza, belge
-üstbilgisi, görev özeti ve ayarlar vardır.
+üstbilgisi, görev özeti, yetenek kaydı, şablonlar ve ayarlar vardır.
+Paket dosya içerikleri kopyalanmaz; yalnızca kayıt meta verisi vardır.
 """
 
 from __future__ import annotations
@@ -42,13 +43,35 @@ def export_personal(db: Database, data_dir: Path) -> dict:
     settings = {r["key"]: json.loads(r["value_json"]) for r in db.query("SELECT key, value_json FROM app_settings")}
     workspaces = [dict(r) for r in db.query("SELECT * FROM workspaces")]
     feedback = [dict(r) for r in db.query("SELECT * FROM feedback_items ORDER BY created_at")]
+    skills = [
+        dict(r)
+        for r in db.query(
+            "SELECT id, version, name, description, enabled, package_dir, content_hash, tools_json, created_at FROM skills ORDER BY name"
+        )
+    ]
+    skill_grants = [dict(r) for r in db.query("SELECT skill_id, permission, scope_json FROM skill_grants ORDER BY skill_id")]
+    templates = [dict(r) for r in db.query("SELECT * FROM prompt_templates ORDER BY updated_at")]
+    template_versions = [dict(r) for r in db.query("SELECT * FROM prompt_template_versions ORDER BY template_id, version")]
 
     payload = {
         "exported_at": utcnow(),
         "format": "ahirena-export",
-        "version": 2,
-        "includes": ["conversations", "messages", "memory", "documents_meta", "tasks", "settings", "workspaces", "feedback"],
-        "excludes": ["secrets", "model_weights", "ollama_token", "search_indexes"],
+        "version": 3,
+        "includes": [
+            "conversations",
+            "messages",
+            "memory",
+            "documents_meta",
+            "tasks",
+            "settings",
+            "workspaces",
+            "feedback",
+            "skills_meta",
+            "skill_grants",
+            "prompt_templates",
+            "prompt_template_versions",
+        ],
+        "excludes": ["secrets", "model_weights", "ollama_token", "search_indexes", "skill_package_files"],
         "workspaces": workspaces,
         "conversations": conversations,
         "messages": messages,
@@ -56,6 +79,10 @@ def export_personal(db: Database, data_dir: Path) -> dict:
         "documents": documents,
         "tasks": [{k: v for k, v in t.items() if k != "grant_json" or True} for t in tasks],
         "feedback_items": feedback,
+        "skills": skills,
+        "skill_grants": skill_grants,
+        "prompt_templates": templates,
+        "prompt_template_versions": template_versions,
         "settings": settings,
     }
     (out / "export.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -63,6 +90,7 @@ def export_personal(db: Database, data_dir: Path) -> dict:
         "Ahirena kişisel dışa aktarım.\n"
         "Bu klasörde sır, model ağırlığı ve uygulama tokenı yoktur.\n"
         "Belge içerikleri yeniden indekslenmelidir; yalnızca üstbilgi vardır.\n"
+        "Yetenek paket dosyaları kopyalanmaz; kayıt ve izin meta verisi vardır.\n"
         f"Oluşturulma: {payload['exported_at']}\n",
         encoding="utf-8",
     )

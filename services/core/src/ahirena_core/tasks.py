@@ -111,7 +111,12 @@ class TaskEngine:
             rows = self.db.query("SELECT * FROM tasks WHERE state = ? ORDER BY updated_at DESC", (state,))
         else:
             rows = self.db.query("SELECT * FROM tasks ORDER BY updated_at DESC")
-        return [_row(r) for r in rows]
+        out = []
+        for r in rows:
+            steps = self.db.query("SELECT * FROM task_steps WHERE task_id = ? ORDER BY ordinal", (r["id"],))
+            approvals = self.db.query("SELECT * FROM approvals WHERE task_id = ? ORDER BY created_at", (r["id"],))
+            out.append(_row(r, steps, approvals))
+        return out
 
     def get(self, task_id: str) -> dict:
         row = self.db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))

@@ -124,7 +124,13 @@ class Store:
             )
         return self.get_conversation(cid)  # type: ignore[return-value]
 
-    def branch_conversation(self, conversation_id: str, *, up_to_message_id: str | None = None) -> Conversation:
+    def branch_conversation(
+        self,
+        conversation_id: str,
+        *,
+        up_to_message_id: str | None = None,
+        model_id: str | None = None,
+    ) -> Conversation:
         src = self.get_conversation(conversation_id)
         if src is None:
             raise ValueError("Oturum yok.")
@@ -138,9 +144,13 @@ class Store:
             else:
                 raise ValueError("Checkpoint mesajı yok.")
             messages = kept
+        chosen = (model_id or "").strip() or src.model_id
+        title = f"{src.title} · dal"
+        if chosen and chosen != src.model_id:
+            title = f"{src.title} · dal · {chosen}"
         branch = self.create_conversation(
-            f"{src.title} · dal",
-            src.model_id,
+            title,
+            chosen,
             src.workspace_id,
             parent_id=src.id,
         )

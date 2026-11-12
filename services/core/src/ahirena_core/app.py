@@ -19,6 +19,7 @@ from .knowledge import KnowledgeError, resume_jobs, retrieve_for_chat
 from .phase2 import register_phase2
 from .phase3 import register_phase3
 from .artifacts import ArtifactError, diff, forget, list_artifacts, preview
+from .skills import SkillRegistry
 from .export import (
     ExportError,
     cancel_pending_restore,
@@ -101,6 +102,11 @@ class CompareSaveBody(BaseModel):
 
 class ForgetBody(BaseModel):
     delete_file: bool = False
+
+
+class BranchConversationBody(BaseModel):
+    up_to_message_id: str | None = Field(default=None, max_length=80)
+    model_id: str | None = Field(default=None, max_length=200)
 
 
 class RestoreBody(BaseModel):
@@ -410,6 +416,36 @@ def create_app(
             pack = retrieve_for_chat(s.db, conv.workspace_id, body.content)
         except KnowledgeError:
             pack = {"sources": [], "prompt": ""}
+        evidence: list[dict[str, Any]] = list(pack.get("sources") or [])
+        evidence.insert(
+            0,
+            {
+                "kind": "model",
+                "id": body.model_id,
+                "title": body.model_id,
+                "path": None,
+                "text": f"sağlayıcı {p.id}" + (f" · özet {digest[:12]}" if digest else " · özet yok"),
+            },
+        )
+        try:
+            for skill in SkillRegistry(s.db, settings.data_dir).list():
+                if not skill.get("enabled"):
+                    continue
+                evidence.append(
+                    {
+                        "kind": "skill",
+                        "id": skill["id"],
+                        "title": skill["name"],
+                        "path": skill.get("package_dir"),
+                        "text": (
+                            f"sürüm {skill.get('version', '?')} · özet {str(skill.get('content_hash', ''))[:12]} · "
+                            "etkin (bu yanıtta araç çağrılmadı)"
+                        ),
+                    }
+                )
+        except Exception:
+            pass
+        pack["sources"] = evidence
         images: list[str] | None = None
         if body.image_path:
             try:
@@ -592,11 +628,15 @@ def create_app(
             raise HTTPException(400, str(e)) from e
 
     @app.post("/api/conversations/{cid}/branch")
-    async def branch_conversation(cid: str, body: dict | None = None) -> Conversation:
+    async def branch_conversation(cid: str, body: BranchConversationBody | None = None) -> Conversation:
         conversation_or_404(cid)
-        up_to = (body or {}).get("up_to_message_id")
+        payload = body or BranchConversationBody()
         try:
-            return store().branch_conversation(cid, up_to_message_id=up_to)
+            return store().branch_conversation(
+                cid,
+                up_to_message_id=payload.up_to_message_id,
+                model_id=payload.model_id,
+            )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 

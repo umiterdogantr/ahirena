@@ -87,3 +87,40 @@ def test_http_branch_replay_draft_and_image_without_vision(live, tmp_path: Path)
         assert "vision" in r.json()["detail"].lower() or "Vision" in r.json()["detail"] or "vision" in r.text.lower()
         branched = c.post(f"/api/conversations/{cid}/branch", json={})
         assert branched.status_code == 200
+
+
+def test_conversation_branch_model_and_checkpoint(live):
+    with live.client() as c:
+        cid = c.post("/api/conversations", json={"model_id": "fake-model"}).json()["id"]
+        with c.stream(
+            "POST",
+            f"/api/conversations/{cid}/chat",
+            json={"content": "bir", "model_id": "fake-model", "provider_id": "fake"},
+        ) as r:
+            assert r.status_code == 200
+            r.read()
+        with c.stream(
+            "POST",
+            f"/api/conversations/{cid}/chat",
+            json={"content": "iki", "model_id": "fake-model", "provider_id": "fake"},
+        ) as r:
+            assert r.status_code == 200
+            r.read()
+        msgs = c.get(f"/api/conversations/{cid}/messages").json()
+        assert len(msgs) >= 4
+        checkpoint = msgs[1]["id"]
+        branch = c.post(
+            f"/api/conversations/{cid}/branch",
+            json={"up_to_message_id": checkpoint, "model_id": "other-model"},
+        )
+        assert branch.status_code == 200, branch.text
+        body = branch.json()
+        assert body["parent_id"] == cid
+        assert body["model_id"] == "other-model"
+        assert "other-model" in body["title"]
+        branched_msgs = c.get(f"/api/conversations/{body['id']}/messages").json()
+        assert len(branched_msgs) == 2
+        assert branched_msgs[-1]["id"] != checkpoint
+        assert branched_msgs[-1]["content"] == msgs[1]["content"]
+        bad = c.post(f"/api/conversations/{cid}/branch", json={"up_to_message_id": "yok"})
+        assert bad.status_code == 400

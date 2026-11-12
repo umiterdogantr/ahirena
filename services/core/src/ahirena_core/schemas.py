@@ -34,11 +34,14 @@ class ConversationUpdate(BaseModel):
 
 
 class MessageSource(BaseModel):
-    kind: Literal["memory", "document"]
+    kind: Literal["memory", "document", "skill", "model", "index"]
     id: str
     title: str
     path: str | None = None
     text: str = ""
+    version: int | None = None
+    start_char: int | None = None
+    end_char: int | None = None
 
 
 class MessageAttachment(BaseModel):

@@ -32,6 +32,8 @@ def test_export_and_backup_omit_indexes(tmp_path: Path):
     assert "Tercih Türkçe" in text
     assert "Düzeltme örneği" in text
     assert "feedback" in text
+    assert "skills_meta" in text or "skills" in text
+    assert "prompt_templates" in text
     assert "secrets" in text
     assert "AHIRENA_TOKEN" not in text
     backup = consistent_backup(db, tmp_path)
