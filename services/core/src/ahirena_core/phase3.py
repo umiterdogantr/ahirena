@@ -12,6 +12,7 @@ from .knowledge import (
     create_workspace,
     delete_document,
     delete_memory,
+    find_similar_memory,
     import_document,
     list_documents,
     list_index_jobs,
@@ -89,6 +90,18 @@ def register_phase3(app: FastAPI, settings: Settings) -> None:
     @app.get("/api/memory/search")
     async def find_memory(workspace_id: str = Query(min_length=1), q: str = Query(min_length=1)) -> dict:
         return guard(lambda: search_memory(db(), workspace_id, q))
+
+    @app.get("/api/memory/similar")
+    async def similar_memory(
+        workspace_id: str = Query(min_length=1),
+        q: str = Query(min_length=1, max_length=4000),
+    ) -> dict:
+        return guard(
+            lambda: {
+                "similar": find_similar_memory(db(), workspace_id, q),
+                "note": "Benzer kayıtlar üzerine yazılmaz; kaynaklarıyla yan yana gösterilir.",
+            }
+        )
 
     @app.get("/api/documents")
     async def get_documents(workspace_id: str = Query(min_length=1)) -> list[dict]:

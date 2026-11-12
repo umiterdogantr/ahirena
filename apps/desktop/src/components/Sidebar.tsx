@@ -131,7 +131,10 @@ export default function Sidebar({ view, onView, activeId, onSelect, version, onC
               />
             ) : (
               <button className="session-title" onClick={() => onSelect(c.id)} title={c.title}>
-                <span>{c.title}</span>
+                <span>
+                  {c.parent_id ? "Dal · " : ""}
+                  {c.title}
+                </span>
                 <small className="muted">{c.match_snippet ?? dateTime(c.updated_at)}</small>
               </button>
             )}

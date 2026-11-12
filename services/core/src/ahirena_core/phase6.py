@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .config import Settings
-from .feedback import ISSUE_TYPES, FeedbackError, create_feedback, list_feedback, set_feedback_status
+from .feedback import (
+    ISSUE_TYPES,
+    FeedbackError,
+    create_feedback,
+    export_feedback,
+    feedback_to_skill_draft,
+    list_feedback,
+    set_feedback_status,
+)
+from .storage import StorageError
 from .training import TrainingError, capability, create_run, list_adapters, list_runs
 
 
@@ -36,7 +45,7 @@ def register_phase6(app: FastAPI, settings: Settings) -> None:
     def guard(work):
         try:
             return work()
-        except (TrainingError, FeedbackError) as e:
+        except (TrainingError, FeedbackError, StorageError) as e:
             raise HTTPException(400, str(e)) from e
 
     @app.get("/api/training")
@@ -54,13 +63,24 @@ def register_phase6(app: FastAPI, settings: Settings) -> None:
         return guard(lambda: create_run(app.state.store.db, body.model_dump()))
 
     @app.get("/api/feedback")
-    async def get_feedback_list() -> dict:
-        return {"items": list_feedback(app.state.store.db), "issue_types": ISSUE_TYPES}
+    async def get_feedback_list(status: str | None = Query(default=None, max_length=20)) -> dict:
+        items = list_feedback(app.state.store.db)
+        if status:
+            items = [i for i in items if i["status"] == status]
+        return {"items": items, "issue_types": ISSUE_TYPES, "status_filter": status}
 
     @app.post("/api/feedback")
     async def post_feedback(body: FeedbackBody) -> dict:
         return guard(lambda: create_feedback(app.state.store.db, body.model_dump()))
 
+    @app.post("/api/feedback/export")
+    async def post_feedback_export(status: str | None = Query(default=None, max_length=20)) -> dict:
+        return guard(lambda: export_feedback(app.state.store.db, settings.data_dir, status=status))
+
     @app.patch("/api/feedback/{feedback_id}")
     async def patch_feedback(feedback_id: str, body: FeedbackStatusBody) -> dict:
         return guard(lambda: set_feedback_status(app.state.store.db, feedback_id, body.status))
+
+    @app.post("/api/feedback/{feedback_id}/skill-draft")
+    async def post_feedback_skill_draft(feedback_id: str) -> dict:
+        return guard(lambda: feedback_to_skill_draft(app.state.store.db, settings.data_dir, feedback_id))

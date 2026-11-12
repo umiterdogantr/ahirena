@@ -67,6 +67,8 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
   const [notice, setNotice] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
   const [workspaceId, setWorkspaceId] = useState("genel");
+  const [parentId, setParentId] = useState<string | null>(null);
+  const [newSpace, setNewSpace] = useState("");
   const skipReload = useRef<string | null>(null);
   const pendingCancel = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -98,6 +100,7 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
     setNotice(null);
     if (!conversationId) {
       setMessages([]);
+      setParentId(null);
       setModel((m) => m ?? settings.default_model ?? models[0]?.model_id ?? null);
       return;
     }
@@ -111,6 +114,7 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
         if (cancelled) return;
         setMessages(msgs);
         setWorkspaceId(conv.workspace_id || "genel");
+        setParentId(conv.parent_id ?? null);
         setModel(conv.model_id ?? settings.default_model ?? models[0]?.model_id ?? null);
         stickToBottom.current = true;
       } catch (e) {
@@ -273,6 +277,40 @@ export default function ChatView({ conversationId, models, ollamaOk, runtimeErro
             ))}
           </select>
         </label>
+        <input
+          value={newSpace}
+          disabled={!!run}
+          onChange={(e) => setNewSpace(e.target.value)}
+          placeholder="Yeni alan adı"
+          aria-label="Yeni çalışma alanı"
+          style={{ maxWidth: "9rem" }}
+        />
+        <button
+          type="button"
+          disabled={!!run || !newSpace.trim()}
+          onClick={async () => {
+            try {
+              const created = await api<{ id: string; name: string }>("POST", "/api/workspaces", { name: newSpace.trim() });
+              const list = await api<{ id: string; name: string }[]>("GET", "/api/workspaces");
+              setWorkspaces(list);
+              setWorkspaceId(created.id);
+              setNewSpace("");
+              if (conversationId) {
+                await api("PATCH", `/api/conversations/${conversationId}`, { workspace_id: created.id });
+              }
+              setError(null);
+            } catch (e) {
+              setError(errorText(e));
+            }
+          }}
+        >
+          Alan aç
+        </button>
+        {parentId && onSelect && (
+          <button type="button" disabled={!!run} title="Bu oturumun üst dalına dön" onClick={() => onSelect(parentId)}>
+            Üst oturum
+          </button>
+        )}
         {canThink && (
           <label className="check" title="Model düşünme çıktısı üretir; yanıt süresi uzar.">
             <input type="checkbox" checked={think} onChange={(e) => setThink(e.target.checked)} disabled={!!run} /> Düşünme

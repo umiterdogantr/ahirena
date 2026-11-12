@@ -6,6 +6,7 @@ export interface Conversation {
   model_id: string | null;
   archived: boolean;
   workspace_id: string;
+  parent_id?: string | null;
   created_at: string;
   updated_at: string;
   match_snippet?: string | null;

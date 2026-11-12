@@ -318,6 +318,22 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX ix_feedback_created ON feedback_items(created_at);
         """,
     ),
+    (
+        10,
+        """
+        CREATE TABLE skill_versions (
+            skill_id      TEXT NOT NULL,
+            content_hash  TEXT NOT NULL,
+            version       TEXT NOT NULL,
+            description   TEXT NOT NULL,
+            package_dir   TEXT NOT NULL,
+            tools_json    TEXT NOT NULL,
+            archived_at   TEXT NOT NULL,
+            PRIMARY KEY (skill_id, content_hash)
+        );
+        CREATE INDEX ix_skill_versions_skill ON skill_versions(skill_id, archived_at);
+        """,
+    ),
 ]
 
 

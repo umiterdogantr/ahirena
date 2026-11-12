@@ -150,3 +150,36 @@ def test_mcp_grant_revoked_when_tools_change(live, tmp_path, monkeypatch):
     assert denied.json()["ok"] is False
     assert client.delete(f"/api/mcp/{server_id}").json()["removed"] == server_id
     assert client.get("/api/mcp").json() == []
+
+
+def test_skill_version_rollback(live, tmp_path):
+    src1 = _skill(tmp_path / "saat-v1", "saat", ["clock.now"], "Birinci paket.")
+    src2 = _skill(tmp_path / "saat-v2", "saat", ["clock.now"], "İkinci paket sürümü.")
+    client = live.client()
+    first = client.post("/api/skills/import", json={"path": str(src1)})
+    assert first.status_code == 200, first.text
+    h1 = first.json()["content_hash"]
+    assert first.json()["version"] == "1"
+    enabled = client.post("/api/skills/saat/enable", json={"grants": [{"permission": "clock.now", "scope": {}}]})
+    assert enabled.status_code == 200
+    second = client.post("/api/skills/import", json={"path": str(src2)})
+    assert second.status_code == 200, second.text
+    h2 = second.json()["content_hash"]
+    assert h2 != h1
+    assert second.json()["version"] == "2"
+    assert second.json()["enabled"] is False
+    assert second.json()["grants"] == []
+    versions = client.get("/api/skills/saat/versions")
+    assert versions.status_code == 200
+    body = versions.json()
+    hashes = {v["content_hash"] for v in body["versions"]}
+    assert h1 in hashes and h2 in hashes
+    active = [v for v in body["versions"] if v["active"]]
+    assert len(active) == 1 and active[0]["content_hash"] == h2
+    rolled = client.post("/api/skills/saat/rollback", json={"content_hash": h1})
+    assert rolled.status_code == 200, rolled.text
+    assert rolled.json()["content_hash"] == h1
+    assert rolled.json()["enabled"] is False
+    assert rolled.json()["grants"] == []
+    again = client.get("/api/skills/saat/versions").json()
+    assert next(v for v in again["versions"] if v["active"])["content_hash"] == h1

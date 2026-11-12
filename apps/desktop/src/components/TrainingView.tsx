@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText } from "../api";
+import { api, errorText, revealPath } from "../api";
 
 interface Cap {
   status: string;
@@ -20,29 +20,49 @@ interface Run {
 
 interface FeedbackItem {
   id: string;
+  issue_type: string;
   issue_label: string;
   note: string;
+  suggested_fix: string | null;
   status: string;
   trains_model: boolean;
   created_at: string;
+  conversation_id: string | null;
+  message_id: string | null;
 }
 
-export default function TrainingView() {
+interface Props {
+  onOpenConversation?: (id: string) => void;
+  onOpenSkills?: () => void;
+  onOpenCompare?: () => void;
+}
+
+const SKILL_DRAFT_TYPES = new Set(["bad_instruction", "tool_failure", "other"]);
+
+export default function TrainingView({ onOpenConversation, onOpenSkills, onOpenCompare }: Props) {
   const [cap, setCap] = useState<Cap | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
+  const [filter, setFilter] = useState("");
   const [base, setBase] = useState("");
   const [goal, setGoal] = useState("");
   const [why, setWhy] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [exportPath, setExportPath] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    const r = await api<{ capability: Cap; runs: Run[]; feedback: FeedbackItem[] }>("GET", "/api/training");
+    const q = filter ? `?status=${encodeURIComponent(filter)}` : "";
+    const r = await api<{ capability: Cap; runs: Run[]; feedback: FeedbackItem[] }>("GET", `/api/training`);
     setCap(r.capability);
     setRuns(r.runs);
-    setFeedback(r.feedback ?? []);
-  }, []);
+    if (filter) {
+      const fb = await api<{ items: FeedbackItem[] }>("GET", `/api/feedback${q}`);
+      setFeedback(fb.items);
+    } else {
+      setFeedback(r.feedback ?? []);
+    }
+  }, [filter]);
 
   useEffect(() => {
     reload().catch((e) => setError(errorText(e)));
@@ -126,6 +146,38 @@ export default function TrainingView() {
       ))}
       <h3>Düzeltme adayları</h3>
       <p className="muted small">Sohbetten kaydedilir. Fine-tuning otomatik başlamaz.</p>
+      <div className="row">
+        <label>
+          Durum
+          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="">Tümü</option>
+            <option value="open">Açık</option>
+            <option value="reviewed">İncelendi</option>
+            <option value="dismissed">Kapatıldı</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              const q = filter ? `?status=${encodeURIComponent(filter)}` : "";
+              const r = await api<{ path: string; count: number }>("POST", `/api/feedback/export${q}`);
+              setExportPath(r.path);
+              setNote(`${r.count} düzeltme dışa aktarıldı.`);
+              setError(null);
+            } catch (e) {
+              setError(errorText(e));
+            }
+          }}
+        >
+          Listeyi dışa aktar
+        </button>
+        {exportPath && (
+          <button type="button" onClick={() => revealPath(exportPath).catch((e) => setError(errorText(e)))}>
+            Dosyayı klasörde aç
+          </button>
+        )}
+      </div>
       {feedback.length === 0 && <p className="muted">Henüz düzeltme yok.</p>}
       {feedback.map((f) => (
         <article key={f.id} className="facts">
@@ -133,39 +185,77 @@ export default function TrainingView() {
             {f.issue_label} · {f.status}
           </h3>
           <p>{f.note}</p>
+          {f.suggested_fix && (
+            <p className="muted small">
+              Önerilen düzeltme: {f.suggested_fix}
+            </p>
+          )}
           <p className="muted small">
             {f.created_at} · modeli eğitir: {f.trains_model ? "evet" : "hayır"}
           </p>
-          {f.status === "open" && (
-            <div className="row">
+          <div className="row">
+            {f.conversation_id && onOpenConversation && (
+              <button type="button" onClick={() => onOpenConversation(f.conversation_id!)}>
+                Oturuma git
+              </button>
+            )}
+            {f.issue_type === "wrong_model" && onOpenCompare && (
+              <button type="button" onClick={() => onOpenCompare()}>
+                Model karşılaştır
+              </button>
+            )}
+            {SKILL_DRAFT_TYPES.has(f.issue_type) && f.status === "open" && (
               <button
                 type="button"
                 onClick={async () => {
                   try {
-                    await api("PATCH", `/api/feedback/${f.id}`, { status: "reviewed" });
+                    const r = await api<{ note: string; candidate: { name: string } }>(
+                      "POST",
+                      `/api/feedback/${f.id}/skill-draft`,
+                    );
+                    setNote(`${r.note} (${r.candidate.name})`);
+                    setError(null);
                     await reload();
+                    onOpenSkills?.();
                   } catch (e) {
                     setError(errorText(e));
                   }
                 }}
               >
-                İncelendi
+                Yetenek taslağına çevir
               </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await api("PATCH", `/api/feedback/${f.id}`, { status: "dismissed" });
-                    await reload();
-                  } catch (e) {
-                    setError(errorText(e));
-                  }
-                }}
-              >
-                Kapat
-              </button>
-            </div>
-          )}
+            )}
+            {f.status === "open" && (
+              <>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await api("PATCH", `/api/feedback/${f.id}`, { status: "reviewed" });
+                      await reload();
+                    } catch (e) {
+                      setError(errorText(e));
+                    }
+                  }}
+                >
+                  İncelendi
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await api("PATCH", `/api/feedback/${f.id}`, { status: "dismissed" });
+                      await reload();
+                    } catch (e) {
+                      setError(errorText(e));
+                    }
+                  }}
+                >
+                  Kapat
+                </button>
+              </>
+            )}
+          </div>
         </article>
       ))}
       {note && <p className="muted">{note}</p>}

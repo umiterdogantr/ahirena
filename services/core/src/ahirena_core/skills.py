@@ -106,7 +106,7 @@ class SkillRegistry:
         name, description, _body = parse_skill_md(skill_md)
         tools = parse_capabilities(cap_text)
         digest = package_hash(skill_md, cap_text)
-        existing = self.db.query_one("SELECT id, content_hash FROM skills WHERE id = ?", (name,))
+        existing = self.db.query_one("SELECT * FROM skills WHERE id = ?", (name,))
         if existing and existing["content_hash"] == digest:
             return self.get(name)
         dest = self.root / name / digest[:12]
@@ -118,10 +118,15 @@ class SkillRegistry:
         now = utcnow()
         with self.db.transaction() as c:
             if existing:
+                self._archive_row(c, existing, now)
+                try:
+                    next_ver = str(int(str(existing["version"])) + 1)
+                except ValueError:
+                    next_ver = f"{existing['version']}+1"
                 c.execute(
-                    """UPDATE skills SET version='1', description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?, created_at=?
+                    """UPDATE skills SET version=?, description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?, created_at=?
                        WHERE id=?""",
-                    (description, str(dest), digest, json.dumps(tools), now, name),
+                    (next_ver, description, str(dest), digest, json.dumps(tools), now, name),
                 )
                 c.execute("DELETE FROM skill_grants WHERE skill_id = ?", (name,))
             else:
@@ -135,24 +140,191 @@ class SkillRegistry:
         mark_imported_by_path(self.db, str(src))
         return self.get(name)
 
+    def list_versions(self, skill_id: str) -> dict:
+        skill = self.get(skill_id)
+        by_hash: dict[str, dict] = {}
+        for row in self.db.query(
+            "SELECT * FROM skill_versions WHERE skill_id = ? ORDER BY archived_at DESC",
+            (skill_id,),
+        ):
+            by_hash[row["content_hash"]] = {
+                "content_hash": row["content_hash"],
+                "version": row["version"],
+                "description": row["description"],
+                "package_dir": row["package_dir"],
+                "tools": json.loads(row["tools_json"]),
+                "active": False,
+                "exists": Path(row["package_dir"]).is_dir(),
+                "archived_at": row["archived_at"],
+            }
+        parent = self.root / skill_id
+        if parent.is_dir():
+            for child in sorted(parent.iterdir()):
+                if not child.is_dir():
+                    continue
+                try:
+                    meta = self._read_package(child)
+                except SkillError:
+                    continue
+                if meta["content_hash"] in by_hash:
+                    by_hash[meta["content_hash"]]["exists"] = True
+                    by_hash[meta["content_hash"]]["package_dir"] = str(child)
+                    continue
+                if meta["content_hash"] == skill["content_hash"]:
+                    continue
+                by_hash[meta["content_hash"]] = {
+                    "content_hash": meta["content_hash"],
+                    "version": "?",
+                    "description": meta["description"],
+                    "package_dir": str(child),
+                    "tools": meta["tools"],
+                    "active": False,
+                    "exists": True,
+                    "archived_at": None,
+                }
+        active = {
+            "content_hash": skill["content_hash"],
+            "version": skill["version"],
+            "description": skill["description"],
+            "package_dir": skill["package_dir"],
+            "tools": skill["tools"],
+            "active": True,
+            "exists": Path(skill["package_dir"]).is_dir() if skill.get("package_dir") else False,
+            "archived_at": None,
+        }
+        by_hash[skill["content_hash"]] = active
+        versions = sorted(
+            by_hash.values(),
+            key=lambda v: (0 if v["active"] else 1, v.get("archived_at") or "", v["content_hash"]),
+        )
+        return {
+            "skill_id": skill_id,
+            "versions": versions,
+            "note": "Önceki sürüme dönüş izni düşürür; otomatik etkinleştirmez.",
+        }
+
+    def rollback(self, skill_id: str, content_hash: str) -> dict:
+        skill = self.get(skill_id)
+        digest = (content_hash or "").strip()
+        if not digest:
+            raise SkillError("İçerik özeti gerekli.")
+        if digest == skill["content_hash"]:
+            return {**self.get(skill_id), "note": "Bu sürüm zaten etkin paket."}
+        archived = self.db.query_one(
+            "SELECT * FROM skill_versions WHERE skill_id = ? AND content_hash = ?",
+            (skill_id, digest),
+        )
+        package_dir: Path | None = None
+        description = ""
+        tools: list[str] = []
+        version = "1"
+        if archived:
+            package_dir = Path(archived["package_dir"])
+            description = archived["description"]
+            tools = json.loads(archived["tools_json"])
+            version = archived["version"]
+        if package_dir is None or not package_dir.is_dir():
+            parent = self.root / skill_id
+            if parent.is_dir():
+                for child in parent.iterdir():
+                    if not child.is_dir():
+                        continue
+                    try:
+                        meta = self._read_package(child)
+                    except SkillError:
+                        continue
+                    if meta["content_hash"] == digest:
+                        package_dir = child
+                        description = meta["description"]
+                        tools = meta["tools"]
+                        break
+        if package_dir is None or not package_dir.is_dir():
+            raise SkillError("Önceki paket klasörü diskte yok.")
+        meta = self._read_package(package_dir)
+        if meta["content_hash"] != digest:
+            raise SkillError("Paket özeti kayıtla uyuşmuyor.")
+        description = meta["description"]
+        tools = meta["tools"]
+        now = utcnow()
+        with self.db.transaction() as c:
+            current = c.execute("SELECT * FROM skills WHERE id = ?", (skill_id,)).fetchone()
+            if current is None:
+                raise SkillError("Yetenek bulunamadı.")
+            self._archive_row(c, current, now)
+            c.execute(
+                """UPDATE skills SET version=?, description=?, enabled=0, package_dir=?, content_hash=?, tools_json=?, created_at=?
+                   WHERE id=?""",
+                (version, description, str(package_dir), digest, json.dumps(tools), now, skill_id),
+            )
+            c.execute("DELETE FROM skill_grants WHERE skill_id = ?", (skill_id,))
+        out = self.get(skill_id)
+        out["note"] = "Önceki sürüme dönüldü; izinler düşürüldü, yetenek kapalı."
+        return out
+
     def uninstall(self, skill_id: str) -> dict:
         skill = self.get(skill_id)
         package_dir = Path(skill["package_dir"]) if skill.get("package_dir") else None
         with self.db.transaction() as c:
             c.execute("DELETE FROM skill_grants WHERE skill_id = ?", (skill_id,))
+            c.execute("DELETE FROM skill_versions WHERE skill_id = ?", (skill_id,))
             c.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
+        root = self.root.resolve()
+        skill_root = (self.root / skill_id).resolve()
+        try:
+            skill_root.relative_to(root)
+        except ValueError:
+            pass
+        else:
+            if skill_root.is_dir():
+                shutil.rmtree(skill_root, ignore_errors=True)
         if package_dir and package_dir.is_dir():
-            root = self.root.resolve()
             try:
                 package_dir.resolve().relative_to(root)
             except ValueError:
                 pass
             else:
-                parent = package_dir.parent
                 shutil.rmtree(package_dir, ignore_errors=True)
+                parent = package_dir.parent
                 if parent.is_dir() and parent != root and not any(parent.iterdir()):
                     shutil.rmtree(parent, ignore_errors=True)
         return {"removed": skill_id, "was_enabled": skill["enabled"]}
+
+    def _archive_row(self, c, row, archived_at: str) -> None:
+        c.execute(
+            """INSERT INTO skill_versions
+               (skill_id, content_hash, version, description, package_dir, tools_json, archived_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(skill_id, content_hash) DO UPDATE SET
+                 version=excluded.version,
+                 description=excluded.description,
+                 package_dir=excluded.package_dir,
+                 tools_json=excluded.tools_json,
+                 archived_at=excluded.archived_at""",
+            (
+                row["id"],
+                row["content_hash"],
+                row["version"],
+                row["description"],
+                row["package_dir"],
+                row["tools_json"],
+                archived_at,
+            ),
+        )
+
+    def _read_package(self, package_dir: Path) -> dict:
+        skill_path = package_dir / "SKILL.md"
+        cap_path = package_dir / "capabilities.json"
+        if not skill_path.is_file() or not cap_path.is_file():
+            raise SkillError("Paket dosyaları eksik.")
+        skill_md = skill_path.read_text(encoding="utf-8-sig")
+        cap_text = cap_path.read_text(encoding="utf-8-sig")
+        _name, description, _body = parse_skill_md(skill_md)
+        tools = parse_capabilities(cap_text)
+        return {
+            "description": description,
+            "tools": tools,
+            "content_hash": package_hash(skill_md, cap_text),
+        }
 
     def set_enabled(self, skill_id: str, enabled: bool, grants: list[dict] | None = None) -> dict:
         skill = self.get(skill_id)

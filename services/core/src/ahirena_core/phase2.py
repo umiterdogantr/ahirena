@@ -25,6 +25,10 @@ class CallBody(BaseModel):
     arguments: dict = Field(default_factory=dict)
 
 
+class RollbackBody(BaseModel):
+    content_hash: str = Field(min_length=8, max_length=128)
+
+
 class McpBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     command: str = Field(min_length=1, max_length=500)
@@ -93,6 +97,20 @@ def register_phase2(app: FastAPI, settings: Settings) -> None:
             return skills().call(skill_id, body.tool, body.arguments, run_sql)
         except SkillError as e:
             raise HTTPException(404, str(e)) from e
+
+    @app.get("/api/skills/{skill_id}/versions")
+    async def skill_versions(skill_id: str) -> dict:
+        try:
+            return skills().list_versions(skill_id)
+        except SkillError as e:
+            raise HTTPException(404, str(e)) from e
+
+    @app.post("/api/skills/{skill_id}/rollback")
+    async def skill_rollback(skill_id: str, body: RollbackBody) -> dict:
+        try:
+            return skills().rollback(skill_id, body.content_hash)
+        except SkillError as e:
+            raise HTTPException(400, str(e)) from e
 
     @app.get("/api/mcp")
     async def list_mcp() -> list[dict]:

@@ -81,6 +81,47 @@ def list_memory(db: Database, workspace_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def find_similar_memory(db: Database, workspace_id: str, body: str, *, exclude_id: str | None = None, limit: int = 5) -> list[dict]:
+    """Aynı alanda benzer aktif kayıtları bulur; üzerine yazma yoktur."""
+    _require_workspace(db, workspace_id)
+    text = (body or "").strip()
+    if not text:
+        return []
+    tokens = [re.sub(r"[^0-9a-z]+", "", t) for t in search_key(text).split()]
+    tokens = [t for t in tokens if len(t) >= 3][:8]
+    if not tokens:
+        return []
+    # OR ile aday bul; tek ortak sözcük yeter (çelişki uyarısı için)
+    expr = " OR ".join(f'"{t}"*' for t in tokens)
+    rows = db.query(
+        """
+        SELECT m.id, m.body, m.source_ref, m.status, m.updated_at, bm25(memory_fts) AS rank
+        FROM memory_fts
+        JOIN memory_items m ON m.id = memory_fts.memory_id
+        WHERE memory_fts MATCH ? AND m.workspace_id = ? AND m.status = 'active'
+        ORDER BY rank
+        LIMIT ?
+        """,
+        (expr, workspace_id, limit + (1 if exclude_id else 0)),
+    )
+    out: list[dict] = []
+    for r in rows:
+        if exclude_id and r["id"] == exclude_id:
+            continue
+        out.append(
+            {
+                "id": r["id"],
+                "body": r["body"],
+                "source_ref": r["source_ref"],
+                "status": r["status"],
+                "updated_at": r["updated_at"],
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
 def add_memory(db: Database, workspace_id: str, body: str, source_ref: str) -> dict:
     _require_workspace(db, workspace_id)
     text = (body or "").strip()
@@ -89,6 +130,7 @@ def add_memory(db: Database, workspace_id: str, body: str, source_ref: str) -> d
         raise KnowledgeError("Hafıza metni boş.")
     if not source:
         raise KnowledgeError("Kaynak zorunlu. Model tahmini kayıt edilmez.")
+    similar_before = find_similar_memory(db, workspace_id, text)
     now = utcnow()
     mid = _id()
     with db.transaction() as c:
@@ -112,6 +154,12 @@ def add_memory(db: Database, workspace_id: str, body: str, source_ref: str) -> d
         "verified": 1,
         "created_at": now,
         "updated_at": now,
+        "similar": similar_before,
+        "note": (
+            "Yeni kayıt eklendi; benzer kayıtların üzerine yazılmadı. Kaynaklarıyla birlikte inceleyin."
+            if similar_before
+            else None
+        ),
     }
 
 

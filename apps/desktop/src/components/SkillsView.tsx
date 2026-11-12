@@ -8,12 +8,24 @@ interface Grant {
 
 interface Skill {
   id: string;
+  version?: string;
   description: string;
   enabled: boolean;
   content_hash: string;
   tools: string[];
   grants: Grant[];
   scripts: string;
+}
+
+interface SkillVersion {
+  content_hash: string;
+  version: string;
+  description: string;
+  package_dir: string;
+  tools: string[];
+  active: boolean;
+  exists: boolean;
+  archived_at: string | null;
 }
 
 interface McpServer {
@@ -53,6 +65,7 @@ export default function SkillsView() {
   const [mcpArgs, setMcpArgs] = useState("");
   const [draftPrompt, setDraftPrompt] = useState("");
   const [candidates, setCandidates] = useState<{ id: string; name: string; description: string; tools: string[]; package_dir: string }[]>([]);
+  const [versions, setVersions] = useState<Record<string, SkillVersion[]>>({});
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -173,7 +186,8 @@ export default function SkillsView() {
           </h3>
           <p>{skill.description}</p>
           <p className="muted small">
-            Araçlar: {skill.tools.join(", ")} · betikler: {skill.scripts} · özet {skill.content_hash.slice(0, 12)}
+            Sürüm {skill.version ?? "?"} · araçlar: {skill.tools.join(", ")} · betikler: {skill.scripts} · özet{" "}
+            {skill.content_hash.slice(0, 12)}
           </p>
           {skill.tools.includes("files.read") && (
             <label>
@@ -207,6 +221,20 @@ export default function SkillsView() {
             >
               Kaldır
             </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const r = await api<{ versions: SkillVersion[] }>("GET", `/api/skills/${skill.id}/versions`);
+                  setVersions((v) => ({ ...v, [skill.id]: r.versions }));
+                  setError(null);
+                } catch (e) {
+                  setError(errorText(e));
+                }
+              }}
+            >
+              Sürümler
+            </button>
             {skill.tools.includes("clock.now") && (
               <button
                 onClick={() =>
@@ -217,6 +245,37 @@ export default function SkillsView() {
               </button>
             )}
           </div>
+          {versions[skill.id] && versions[skill.id].length > 0 && (
+            <div className="facts">
+              <p className="muted small">Önceki sürüme dönüş izni düşürür; otomatik açılmaz.</p>
+              {versions[skill.id].map((v) => (
+                <div key={v.content_hash} className="row">
+                  <span className="muted small">
+                    v{v.version} · {v.active ? "aktif" : "arşiv"} · {v.exists ? "diskte" : "dosya yok"} ·{" "}
+                    {v.content_hash.slice(0, 12)} · {v.tools.join(", ")}
+                  </span>
+                  {!v.active && (
+                    <button
+                      type="button"
+                      disabled={!v.exists}
+                      onClick={() =>
+                        run("Geri dönüldü", async () => {
+                          const out = await api("POST", `/api/skills/${skill.id}/rollback`, {
+                            content_hash: v.content_hash,
+                          });
+                          const r = await api<{ versions: SkillVersion[] }>("GET", `/api/skills/${skill.id}/versions`);
+                          setVersions((prev) => ({ ...prev, [skill.id]: r.versions }));
+                          return out;
+                        })
+                      }
+                    >
+                      Bu sürüme dön
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {skill.tools.includes("files.read") && (
             <FileCall skillId={skill.id} onRun={run} />
           )}

@@ -8,6 +8,7 @@ from ahirena_core.knowledge import (
     create_workspace,
     delete_document,
     delete_memory,
+    find_similar_memory,
     import_document,
     search_documents,
     search_memory,
@@ -19,10 +20,15 @@ from ahirena_core.knowledge import (
 def test_memory_keeps_both_records_and_stays_in_workspace(tmp_path: Path):
     db = Database(tmp_path / "a.db")
     other = create_workspace(db, "İkinci")
-    add_memory(db, "genel", "Toplantı salı günü.", "kullanıcı 5 Kasım")
-    add_memory(db, "genel", "Toplantı çarşamba günü.", "kullanıcı düzeltmesi")
+    first = add_memory(db, "genel", "Toplantı salı günü.", "kullanıcı 5 Kasım")
+    second = add_memory(db, "genel", "Toplantı çarşamba günü.", "kullanıcı düzeltmesi")
+    assert second["similar"]
+    assert any(s["id"] == first["id"] for s in second["similar"])
+    assert second["note"]
     listed = db.query("SELECT body FROM memory_items WHERE workspace_id = 'genel' AND status = 'active'")
     assert len(listed) == 2
+    similar = find_similar_memory(db, "genel", "Toplantı salı")
+    assert any(s["id"] == first["id"] for s in similar)
     add_memory(db, other["id"], "Toplantı salı günü.", "başka alan")
     genel = search_memory(db, "genel", "toplantı")
     assert len(genel["hits"]) == 2
@@ -167,6 +173,11 @@ def test_chat_does_not_become_memory(live):
         listed = c.get("/api/memory", params={"workspace_id": "genel"})
         assert listed.status_code == 200
         assert listed.json() == []
+        a = c.post("/api/memory", json={"workspace_id": "genel", "body": "Ofis adresi Kadıköy.", "source_ref": "kart"})
+        assert a.status_code == 200
+        sim = c.get("/api/memory/similar", params={"workspace_id": "genel", "q": "Ofis adresi Beşiktaş"})
+        assert sim.status_code == 200
+        assert any(s["id"] == a.json()["id"] for s in sim.json()["similar"])
         ws = c.post("/api/workspaces", json={"name": "Proje"})
         assert ws.status_code == 200
         missing = c.get("/api/memory", params={"workspace_id": "yok"})

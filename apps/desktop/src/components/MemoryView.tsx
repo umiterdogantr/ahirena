@@ -34,6 +34,8 @@ export default function MemoryView() {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [spaceName, setSpaceName] = useState("");
+  const [similar, setSimilar] = useState<SearchHit[]>([]);
+  const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async (ws: string) => {
@@ -51,15 +53,25 @@ export default function MemoryView() {
 
   useEffect(() => {
     reload(workspaceId).catch((e) => setError(errorText(e)));
+    setSimilar([]);
+    setNote(null);
   }, [workspaceId, reload]);
 
   const save = async () => {
     setError(null);
+    setNote(null);
     try {
       if (editing) {
         await api("PATCH", `/api/memory/${editing}`, { body, source_ref: source });
+        setSimilar([]);
       } else {
-        await api("POST", "/api/memory", { workspace_id: workspaceId, body, source_ref: source });
+        const r = await api<{ similar?: SearchHit[]; note?: string | null }>("POST", "/api/memory", {
+          workspace_id: workspaceId,
+          body,
+          source_ref: source,
+        });
+        setSimilar(r.similar ?? []);
+        setNote(r.note ?? "Kayıt eklendi.");
       }
       setBody("");
       setSource("");
@@ -117,9 +129,45 @@ export default function MemoryView() {
         Kaynak
         <input value={source} onChange={(e) => setSource(e.target.value)} placeholder="kim söyledi, hangi not" />
       </label>
-      <button className="primary" onClick={save}>
-        {editing ? "Düzeltmeyi kaydet" : "Kaydet"}
-      </button>
+      <div className="row">
+        <button className="primary" onClick={save}>
+          {editing ? "Düzeltmeyi kaydet" : "Kaydet"}
+        </button>
+        {!editing && (
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const r = await api<{ similar: SearchHit[]; note: string }>(
+                  "GET",
+                  `/api/memory/similar?workspace_id=${encodeURIComponent(workspaceId)}&q=${encodeURIComponent(body)}`,
+                );
+                setSimilar(r.similar);
+                setNote(r.similar.length ? r.note : "Benzer aktif kayıt bulunamadı.");
+                setError(null);
+              } catch (e) {
+                setError(errorText(e));
+              }
+            }}
+          >
+            Benzerleri kontrol et
+          </button>
+        )}
+      </div>
+      {note && <p className="muted">{note}</p>}
+      {similar.length > 0 && (
+        <article className="facts">
+          <h3>Benzer kayıtlar (üzerine yazılmadı)</h3>
+          <ul>
+            {similar.map((s) => (
+              <li key={s.id}>
+                {s.body}
+                <div className="muted small">Kaynak: {s.source_ref}</div>
+              </li>
+            ))}
+          </ul>
+        </article>
+      )}
       {items.map((item) => (
         <article key={item.id} className="facts">
           <p>{item.body}</p>

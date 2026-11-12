@@ -374,6 +374,15 @@ export default function SettingsView({ settings, models, health, onSaved }: Prop
             Betik: {String(diag.scripts)} · tarayıcı oturumu: {String(diag.browser_sessions)} · açılış hizmeti:{" "}
             {String((diag.tasks as { os_autostart?: boolean })?.os_autostart)}
           </li>
+          <li>
+            Sır denetimi:{" "}
+            {(diag.secrets as { ok?: boolean; note?: string } | undefined)?.ok === false
+              ? "sızıntı"
+              : "temiz"}
+            {(diag.secrets as { note?: string } | undefined)?.note
+              ? ` — ${(diag.secrets as { note?: string }).note}`
+              : ""}
+          </li>
         </ul>
       )}
     </section>

@@ -172,7 +172,17 @@ export default function App() {
         {view === "documents" && <DocumentsView />}
         {view === "tasks" && <TasksView />}
         {view === "outputs" && <OutputsView />}
-        {view === "training" && <TrainingView />}
+        {view === "training" && (
+          <TrainingView
+            onOpenConversation={(id) => {
+              setActiveId(id);
+              setView("chat");
+              setListVersion((v) => v + 1);
+            }}
+            onOpenSkills={() => setView("skills")}
+            onOpenCompare={() => setView("compare")}
+          />
+        )}
         {view === "settings" && settings && <SettingsView settings={settings} models={models} health={health} onSaved={setSettings} />}
       </main>
       <StatusBar health={health} error={healthError} loaded={loaded} running={running} />
