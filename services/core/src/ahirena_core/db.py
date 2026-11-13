@@ -362,6 +362,37 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        13,
+        """
+        CREATE TABLE evaluation_sets (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            data_version  TEXT NOT NULL,
+            items_json    TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+        CREATE TABLE evaluation_runs (
+            id             TEXT PRIMARY KEY,
+            set_id         TEXT NOT NULL REFERENCES evaluation_sets(id),
+            provider_id    TEXT NOT NULL,
+            model_id       TEXT NOT NULL,
+            candidate_id   TEXT,
+            status         TEXT NOT NULL,
+            results_json   TEXT NOT NULL,
+            summary_json   TEXT NOT NULL,
+            created_at     TEXT NOT NULL
+        );
+        CREATE INDEX ix_evaluation_runs_created ON evaluation_runs(created_at);
+        CREATE TABLE acceptance_reports (
+            id            TEXT PRIMARY KEY,
+            matrix_version TEXT NOT NULL,
+            results_json  TEXT NOT NULL,
+            summary_json  TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+        """,
+    ),
 ]
 
 

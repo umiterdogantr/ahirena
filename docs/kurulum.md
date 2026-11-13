@@ -99,7 +99,9 @@ Görüntü eki yalnızca vision yetenekli modele gider ve güvenilmeyen kaynakt�
 
 ## Eğitim (Aşama 6)
 
-Eğitim kaydı hedef davranış, temel model ve veri sürümünü tutar. Çalıştırıcı yokken `start=true` reddedilir; durum `planned` kalır. Adaptör otomatik etkinleşmez. Konuşmalar modeli eğitmez. Bu cihazda LoRA hattı doğrulanmadan eğitim başlamış gibi gösterilmez.
+Eğitim kaydı hedef davranış, temel model ve veri sürümünü tutar. Çalıştırıcı yokken `start=true` reddedilir; durum `planned` kalır. Adaptör otomatik etkinleşmez; kayıt etkinleştirme Ollama’ya PEFT yüklemez. Konuşmalar modeli eğitmez. Bu cihazda LoRA hattı doğrulanmadan eğitim başlamış gibi gösterilmez.
+
+Ürün kapanışı: Eğitim ekranından holdout değerlendirme kümesi + koşu, ardından kabul matrisi (`/api/acceptance/run`). Matriste `failed=0` ve en az bir değerlendirme koşusu varsa Aşama 6 ürünü kapandı sayılır; LoRA çalıştırıcı planlandı kalır.
 
 Sohbetteki asistan yanıtından **Düzeltme kaydet** ile sorun türü (kaynak, talimat, araç, model, eğitim, diğer) kaydedilir. Bu kayıt modeli eğitmez; Eğitim ekranında aday listesinde görünür. Belge kaynağı ve çıktı/yedek dosyası **Klasörde aç** ile Gezgin’de seçilir.
 
