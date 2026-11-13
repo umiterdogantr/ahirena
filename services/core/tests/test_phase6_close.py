@@ -24,8 +24,10 @@ def test_phase6_holdout_acceptance_and_adapter(live, tmp_path: Path):
 
         acc = c.post("/api/acceptance/run")
         assert acc.status_code == 200, acc.text
-        assert acc.json()["summary"]["failed"] == 0
-        assert acc.json()["summary"]["phase6_closed"] is True
+        summary = acc.json()["summary"]
+        assert summary["failed"] == 0
+        assert summary["phase6_closed"] is True
+        assert summary["release_closed"] is True
 
         pack = tmp_path / "adapters" / "demo"
         pack.mkdir(parents=True)

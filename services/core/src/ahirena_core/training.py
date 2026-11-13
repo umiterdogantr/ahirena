@@ -177,21 +177,31 @@ def phase6_status(data_dir: Path, db: Database) -> dict:
     acc_n = db.query_one("SELECT COUNT(*) AS n FROM acceptance_reports")
     latest_acc = db.query_one("SELECT summary_json FROM acceptance_reports ORDER BY created_at DESC LIMIT 1")
     closed = False
+    release = False
     if latest_acc:
         try:
-            closed = bool(json.loads(latest_acc["summary_json"]).get("phase6_closed"))
+            summary = json.loads(latest_acc["summary_json"])
+            closed = bool(summary.get("phase6_closed"))
+            release = bool(summary.get("release_closed"))
         except ValueError:
             closed = False
+            release = False
+    product = closed and int(eval_n["n"] or 0) > 0
     return {
         "stage": 6,
-        "product_closed": closed and int(eval_n["n"] or 0) > 0,
+        "product_closed": product,
+        "release_closed": release and product,
         "training_runner": cap["status"],
         "evaluation_runs": int(eval_n["n"] or 0),
         "acceptance_reports": int(acc_n["n"] or 0),
         "note": (
-            "Aşama 6 ürün kapanışı: holdout + kabul matrisi tamam."
-            if closed and int(eval_n["n"] or 0) > 0
-            else "Holdout değerlendirme ve başarılı kabul matrisi çalıştırılmalı."
+            "Yayın/kabul kapanışı: KAB matrisi + holdout tamam. LoRA/OCR/TTS planlandı."
+            if release and product
+            else (
+                "Aşama 6 ürün kapanışı: holdout + kabul matrisi tamam."
+                if product
+                else "Holdout değerlendirme ve başarılı kabul matrisi çalıştırılmalı."
+            )
         ),
     }
 

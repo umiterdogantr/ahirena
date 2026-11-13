@@ -103,6 +103,12 @@ Eğitim kaydı hedef davranış, temel model ve veri sürümünü tutar. Çalı�
 
 Ürün kapanışı: Eğitim ekranından holdout değerlendirme kümesi + koşu, ardından kabul matrisi (`/api/acceptance/run`). Matriste `failed=0` ve en az bir değerlendirme koşusu varsa Aşama 6 ürünü kapandı sayılır; LoRA çalıştırıcı planlandı kalır.
 
+## Yol haritası ve yayın
+
+Şartnamedeki uygulama aşamaları **0–6** ile biter; Aşama 7+ yoktur. Sonraki iş kabul matrisi (KAB 01–28) ve dürüst yayın yüzeyiidir.
+
+Eğitim ekranındaki kabul matrisi her KAB maddesini `pass` / `fail` / `skip` olarak listeler. `failed=0` ve holdout koşusu varsa `release_closed=true` olur. Skip maddeler (ör. UI p95, gerçek LoRA karşılaştırması, OCR/TTS ölçümü) yayın engeli değildir; dürüst boşluk listesidir. OCR, TTS, LoRA çalıştırıcı ve Playwright tarayıcı oturumu bu sürümde planlandı/kapalı kalır.
+
 Sohbetteki asistan yanıtından **Düzeltme kaydet** ile sorun türü (kaynak, talimat, araç, model, eğitim, diğer) kaydedilir. Bu kayıt modeli eğitmez; Eğitim ekranında aday listesinde görünür. Belge kaynağı ve çıktı/yedek dosyası **Klasörde aç** ile Gezgin’de seçilir.
 
 ## Yedek ve dışa aktarım

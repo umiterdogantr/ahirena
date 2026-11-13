@@ -12,6 +12,7 @@ interface Cap {
 interface Phase6 {
   stage: number;
   product_closed: boolean;
+  release_closed?: boolean;
   training_runner: string;
   evaluation_runs: number;
   acceptance_reports: number;
@@ -51,9 +52,24 @@ interface EvalRun {
   created_at: string;
 }
 
+interface AccCheck {
+  id: string;
+  title: string;
+  status: string;
+  detail: string;
+}
+
 interface AccReport {
   id: string;
-  summary: { passed: number; failed: number; skipped: number; phase6_closed: boolean; note: string };
+  summary: {
+    passed: number;
+    failed: number;
+    skipped: number;
+    phase6_closed: boolean;
+    release_closed?: boolean;
+    note: string;
+  };
+  results?: AccCheck[];
   path?: string;
   created_at: string;
 }
@@ -143,8 +159,8 @@ export default function TrainingView({ onOpenConversation, onOpenSkills, onOpenC
       {phase6 && (
         <article className="facts">
           <p>
-            Aşama 6 ürün: <strong>{phase6.product_closed ? "kapandı" : "açık"}</strong> · LoRA{" "}
-            {phase6.training_runner}
+            Aşama 6 ürün: <strong>{phase6.product_closed ? "kapandı" : "açık"}</strong> · Yayın:{" "}
+            <strong>{phase6.release_closed ? "kapandı" : "açık"}</strong> · LoRA {phase6.training_runner}
           </p>
           <p className="muted small">
             Değerlendirme {phase6.evaluation_runs} · kabul raporu {phase6.acceptance_reports}
@@ -293,7 +309,7 @@ export default function TrainingView({ onOpenConversation, onOpenSkills, onOpenC
               setNote(
                 `Kabul: pass ${r.summary.passed}, fail ${r.summary.failed}, skip ${r.summary.skipped} · Aşama6 ${
                   r.summary.phase6_closed ? "kapandı" : "açık"
-                }`,
+                } · Yayın ${r.summary.release_closed ? "kapandı" : "açık"}`,
               );
               setError(null);
               await reload();
@@ -309,9 +325,15 @@ export default function TrainingView({ onOpenConversation, onOpenSkills, onOpenC
       {acceptance.slice(0, 3).map((r) => (
         <article key={r.id} className="facts">
           <h3>
-            {r.summary.phase6_closed ? "kapandı" : "açık"} · {r.summary.passed} pass / {r.summary.failed} fail
+            {r.summary.release_closed ? "yayın kapandı" : r.summary.phase6_closed ? "aşama6 kapandı" : "açık"} ·{" "}
+            {r.summary.passed} pass / {r.summary.failed} fail / {r.summary.skipped} skip
           </h3>
           <p className="muted small">{r.summary.note}</p>
+          {(r.results ?? []).map((c) => (
+            <p key={`${r.id}-${c.id}`} className="muted small">
+              {c.id} · {c.status} — {c.title}: {c.detail}
+            </p>
+          ))}
         </article>
       ))}
 
